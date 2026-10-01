@@ -17,27 +17,35 @@ Nothing here places trades or tells anyone to buy or sell.
 
 ## How information flows
 
+GEX and Flow run on their own schedules for every watchlist ticker. They do
+not wait for Kerry's picks; their files are ready when Kerry needs them.
+
 ```
-                 /mnt/project-files/opptions/watchlist.md
-                                   |
-      +--------------+-------------+-------------+----------------+
-      v              v                           v                v
- GEX tracker    Flow tracker               News tracker    Earnings tracker
-      |              |                           |                |
-      |              |                           +---- hand-off --+
-      |              |                                  v
-      |              |                              Explainer
-      |              |                                  |
-      |              |                                  v
-      |              |                Kerry reads, picks stock + option idea
-      |              |                                  |
-      +--------------+------------------+---------------+
-                                        v
-          packet (python3 -m opptions packet SYM) + filled hand-off template
-                    + chart and option-chain screenshots
-                                        |
-                                        v
-                          Options Study chat (claude.ai)
+                  watchlist.md (every ticker Kerry follows)
+                                  |
+     +---------------+------------+------------+-----------------+
+     v               v                         v                 v
+ News tracker   Earnings tracker          GEX tracker       Flow tracker
+ (7:18 ET)      (7:41 ET)                 (after close)     (8:40, 12:17 ET)
+     |               |                         |                 |
+     +-------+-------+                         |                 |
+             v                                 |                 |
+         Explainer (8:50 ET)                   |                 |
+   plain-English read of the news              |                 |
+   and earnings for each ticker                |                 |
+             |                                 |                 |
+             v                                 |                 |
+   Kerry reads it and picks a ticker           |                 |
+   and a trade idea                            |                 |
+             |                                 |                 |
+             v                                 v                 v
+   Packet: send "prep SYMBOL idea" to the Explainer. It bundles that
+   ticker's GEX, Flow, News and Earnings sections into one file and drafts
+   the message for Options Study. Kerry adds chart and option-chain
+   screenshots.
+             |
+             v
+   Options Study chat (claude.ai) analyzes the trade
 ```
 
 ## Folder layout (shared project folder, never the repo)
