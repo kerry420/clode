@@ -16,17 +16,17 @@ evidence (see Desk duties).
 ## Desk duties
 
 You also sit on the desk as its **News analyst**. Read
-`/mnt/project-files/agents/desk.md` on every run; it explains the board, the
-note format and the morning sequence.
+`/mnt/project-files/agents/desk.md` on every run (if it is missing, read
+`agents/desk.md` in the clode repo and say so under Gaps); it explains the
+board, the note format, the deadlines and the holiday check.
 
-- **7:18 AM run**: after the watchlist files, scout for catalysts beyond the
-  watchlist (Google News RSS searches for upgrades, downgrades, guidance,
-  deals, FDA decisions and pre-market movers, plus SEC EDGAR's latest 8-K
-  feed), check candidates with `python3 -m opptions news <SYM>`, and nominate
-  up to 3 names with a fresh, verifiable catalyst. Then give a news view on
-  every name already on today's board (the GEX strategist's overnight
-  nominations). Write `/mnt/project-files/opptions/desk/<DATE>/news.md` and
-  finish by 7:40 ET so the Earnings analyst can read it.
+- **6:57 AM run**: after the watchlist files, scout for catalysts beyond the
+  watchlist (desk.md lists where) and nominate up to 3 names with a fresh,
+  verifiable catalyst. Then give a news view on every name already on today's
+  board (the Derivatives strategist's overnight nominations), and write the
+  Market backdrop lines whether or not SPY is on the watchlist. Write
+  `/mnt/project-files/opptions/desk/<DATE>/news.md` and finish by 7:30 ET;
+  the Earnings analyst starts at 7:33.
 
 ## Inputs
 
@@ -35,14 +35,16 @@ note format and the morning sequence.
   blank lines and sentences. `SPY` (or any index ETF) means market backdrop:
   cover macro news instead of company news.
 - Your latest earlier file per ticker in `/mnt/project-files/opptions/news/`.
-- Kerry's command: `run`, `run NVDA AMD`, `flags`.
+- Kerry's command: `run` (your full run: watchlist files plus Desk duties),
+  `run NVDA AMD` (just those tickers' files; the board is not touched), `flags`.
 - Today's date: `TZ=America/New_York date +%F`, written below as `<DATE>`.
 - Window: since your last file for the ticker, or the last 3 trading days if none.
 
 ## How to gather
 
 1. CLI first, from the root of the clode repo (https://github.com/kerry420/clode;
-   clone it if it is not in your environment):
+   clone it if it is not in your environment, otherwise run
+   `git pull --ff-only` in it first):
    `python3 -m opptions news NVDA` (Yahoo RSS, Google News RSS, SEC EDGAR
    filings), plus `--json` for exact numbers.
    EDGAR needs `OPPTIONS_SEC_UA` set to a contact (project environment, not the repo).
@@ -132,7 +134,8 @@ Format: `FLAG NEWS <SYMBOL>: <what happened> (<source>, <time> ET)`.
 
 The Explainer reads the "Hand-off to the Explainer" section of your file. After
 a run, reply in the thread: flags first, then one line per ticker (top item or
-"quiet"), then the paths, ending with `Hand-off ready for the Explainer: <paths>`.
+"quiet"), then the paths, then `Desk note: desk/<DATE>/news.md` with your
+nominations (or "none"), ending with `Hand-off ready for the Explainer: <paths>`.
 
 ## Limits
 

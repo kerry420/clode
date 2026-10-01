@@ -29,13 +29,13 @@ conviction by how many seats agree, and writes the report.
 ```
   4:40 PM day before   Derivatives strategist: GEX scan, first nominations
           |
-  7:18 AM              News analyst: catalysts, nominations, views on the board
+  6:57 AM              News analyst: catalysts, nominations, views on the board
           |
-  7:41 AM              Earnings analyst: calendar, nominations, views on the board
+  7:33 AM              Earnings analyst: calendar, nominations, views on the board
           |
   8:05 AM              Flow trader: flow scan, nominations, views on the board
           |
-  8:30 AM              Derivatives strategist: fresh-OI levels for every board name
+  8:27 AM              Derivatives strategist: fresh-OI levels for every board name
           |
           v
   8:50 AM              Desk lead: morning meeting, fills gaps, ranks by conviction
@@ -67,13 +67,17 @@ The seats share work through files on the board,
   explainer/<SYMBOL>-<YYYY-MM-DD>.md    Explainer
   desk/<YYYY-MM-DD>/                    the board for one trading day:
     gex.md news.md earnings.md flow.md    each seat's desk note (nominations, views)
+    scan-gex.md scan-flow.md              raw `scan` output behind the GEX and Flow nominations
     desk-report.md                        the Desk Report for Kerry
-  universe.md                           optional: tickers for `scan` (default list built in)
+  universe.md                           optional: tickers for `scan --universe` (default list built in)
+  tools/earnings_moves.py               Earnings tracker helper: past report-day moves
   packets/<SYMBOL>-<YYYY-MM-DD>.md      opptions packet output (the command prints the path)
   notes/                                optional: Kerry's own notes from Options Study
 ```
 
 Dates are the US Eastern trading date: `TZ=America/New_York date +%F`.
+One exception: the 4:40 PM GEX run writes its desk note to the next trading
+day's board folder (see desk.md, which also handles market holidays).
 This repo is public, so the watchlist, positions and picks live only in the
 project folder. Agents never write them into the repo.
 
@@ -82,14 +86,14 @@ project folder. Agents never write them into the repo.
 | When | Seat | What |
 |---|---|---|
 | 4:40 PM, day before | Derivatives strategist | Next day's levels from the close, `scan gex`, first nominations |
-| 7:18 | News analyst | Overnight news and filings, scouting, views on the board |
-| 7:41 | Earnings analyst | Dates and implied moves, scouting, views on the board |
+| 6:57 | News analyst | Overnight news and filings, scouting, views on the board |
+| 7:33 | Earnings analyst | Dates and implied moves, scouting, views on the board |
 | 8:05 | Flow trader | Yesterday's session and new OI, `scan flow`, views on the board |
-| 8:30 | Derivatives strategist | Desk check: levels for every board name with fresh OI |
+| 8:27 | Derivatives strategist | Desk check: levels for every board name with fresh OI |
 | 8:50 | Desk lead | Morning meeting, Desk Report ready by about 9:10 |
 | about 9:15 | Kerry | Reads the Desk Report, picks, sends `prep` |
 | 12:17 | Flow trader | Midday refresh, including the Desk Report names |
-| evening (when needed) | Earnings, Explainer | A watchlist name reported after the close |
+| on request | Earnings, Explainer | Kerry sends `run <SYM>` when a watchlist name reports after the close; otherwise the 7:33 run catches it |
 
 Kerry then follows [options-study-handoff.md](options-study-handoff.md).
 
@@ -98,11 +102,15 @@ Kerry then follows [options-study-handoff.md](options-study-handoff.md).
 1. In the Claude Project, start one thread per agent and name it (GEX tracker,
    Flow tracker, News tracker, Earnings tracker, Explainer).
 2. As the first message, paste the full brief for that agent, or send:
-   "Your instructions are agents/gex-tracker.md in the clode repo. Read it now
-   and follow it for this whole thread."
+   "Your instructions are /mnt/project-files/agents/gex-tracker.md (desk.md is
+   beside it). Read it now and follow it for this whole thread."
+   The threads read their briefs and desk.md from `/mnt/project-files/agents/`.
+   After changing a brief in the repo, copy it there too:
+   `cp agents/*.md /mnt/project-files/agents/` from the clode repo root.
 3. Then send a command:
-   - `run`: every ticker on the watchlist
-   - `run NVDA AMD`: only these tickers
+   - `run`: the seat's full run: watchlist files plus its Desk duties (for the
+     Explainer, the morning meeting). The scheduled runs do this.
+   - `run NVDA AMD`: only these tickers' per-ticker files; the board is not touched
    - `refresh`: Flow tracker's midday update
    - `flags`: just today's flags, no new fetch
    - Explainer only: `why NVDA` explains a Desk Report name in more depth, and
@@ -112,9 +120,10 @@ Kerry then follows [options-study-handoff.md](options-study-handoff.md).
 
 ## Data access (one-time setup)
 
-The toolkit CLI (`python3 -m opptions gex|flow|news|earnings SYM [--json]` and
-`python3 -m opptions packet SYM ... --out DIR`) needs these hosts allowed in
-the Project's network settings:
+The toolkit CLI (`python3 -m opptions gex|flow|news|earnings SYM [--json]`,
+`python3 -m opptions packet SYM ... --out DIR` and
+`python3 -m opptions scan flow|gex [SYMBOLS...] [--universe FILE] [--top N] [--json]`)
+needs these hosts allowed in the Project's network settings:
 
 `cdn-api.cboe.com, api.nasdaq.com, feeds.finance.yahoo.com, news.google.com, www.sec.gov, data.sec.gov`
 

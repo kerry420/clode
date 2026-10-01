@@ -54,6 +54,12 @@ ATTACHED:
 4. Risk graph (if any)
 5. Research packet: <SYMBOL>-<DATE>.md
 
+--- DESK REPORT (desk/<DATE>/desk-report.md)
+Conviction <High/Medium> | Lean <...> | Timeframe <...> | Catalyst <...>
+Seat views: News <view> | Earnings <view> | Flow <view> | GEX <view>
+The desk's read: <paste>
+What would prove the desk wrong: <paste>
+
 --- GEX LEVELS (gex/<SYMBOL>-<DATE>.md, data as of <time ET>)
 Spot <price> | Gamma flip <price> | Call wall <price> | Put wall <price>
 Net GEX: <positive/negative>

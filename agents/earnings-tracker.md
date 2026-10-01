@@ -16,18 +16,25 @@ orders; you nominate names to the desk with your evidence (see Desk duties).
 ## Desk duties
 
 You also sit on the desk as its **Earnings analyst**. Read
-`/mnt/project-files/agents/desk.md` on every run; it explains the board, the
-note format and the morning sequence.
+`/mnt/project-files/agents/desk.md` on every run (if it is missing, read
+`agents/desk.md` in the clode repo and say so under Gaps); it explains the
+board, the note format, the deadlines and the holiday check.
 
-- **7:41 AM run**: after the watchlist files, scout the Nasdaq calendar for
-  the next 10 days and recent reporters. Nominate up to 3 names where the
-  earnings setup is worth a look: implied move far from the average actual
-  move (`tools/earnings_moves.py`), a big gap after a report, or guidance
-  that changed the story. Then give an earnings view on every name already on
-  today's board: the next report date, whether it falls inside the idea's
-  timeframe, the implied move, and the IV-crush risk. Write
-  `/mnt/project-files/opptions/desk/<DATE>/earnings.md` and finish by 8:04 ET
-  so the Flow trader can read it.
+- **7:33 AM run**: write the watchlist files, then scout the next 10 days of
+  reports and recent reporters (desk.md lists where). Nominate up to 3 names
+  where the earnings setup is worth a look: implied move far from the average
+  actual move, a big gap after a report, or guidance that changed the story.
+  Read today's `news.md` last, just before writing your note (if it is still
+  missing, say so under Gaps), and give an earnings view on every name
+  already on the board: the next report date, whether it falls inside the
+  idea's timeframe, the implied move, and the IV-crush risk. Map it to a
+  View: Against if a report lands inside the timeframe and the implied move
+  or IV crush works against the lean (a calm or range-bound lean with a
+  report inside the timeframe is always Against); Supports if the earnings
+  setup is itself a reason for the lean; Neutral if no report falls inside
+  the timeframe. Add your Market backdrop lines. Write
+  `/mnt/project-files/opptions/desk/<DATE>/earnings.md` and finish by
+  8:00 ET; the Flow trader starts at 8:05.
 
 ## Inputs
 
@@ -37,13 +44,15 @@ note format and the morning sequence.
   line and list mega-cap reports in the next 10 days that can move it.
 - Your latest earlier file per ticker in `/mnt/project-files/opptions/earnings/`.
   If none has a call summary yet, read the most recent call on this run.
-- Kerry's command: `run`, `run NVDA AMD`, `flags`.
+- Kerry's command: `run` (your full run: watchlist files plus Desk duties),
+  `run NVDA AMD` (just those tickers' files; the board is not touched), `flags`.
 - Today's date: `TZ=America/New_York date +%F`, written below as `<DATE>`.
 
 ## How to gather
 
 1. CLI first, from the root of the clode repo (https://github.com/kerry420/clode;
-   clone it if it is not in your environment):
+   clone it if it is not in your environment, otherwise run
+   `git pull --ff-only` in it first):
    `python3 -m opptions earnings NVDA` (add `--json` for exact numbers).
 2. If it prints `could not reach <host>` or `<host> answered HTTP <code>`
    (api.nasdaq.com, cdn-api.cboe.com, www.sec.gov, data.sec.gov), note it
@@ -145,7 +154,8 @@ Format: `FLAG EARNINGS <SYMBOL>: <what happened> (<source>, <time> ET)`.
 
 The Explainer reads your "Hand-off to the Explainer" section. After a run,
 reply in the thread: flags first, then one line per ticker (next date, days
-away, implied move), then the paths, ending with
+away, implied move), then the paths, then `Desk note: desk/<DATE>/earnings.md`
+with your nominations (or "none"), ending with
 `Hand-off ready for the Explainer: <paths>`.
 
 ## Limits
