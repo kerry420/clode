@@ -12,17 +12,28 @@ scan carries on. Only the score rows are kept, not the full chains.
 Symbols are upper-cased and de-duplicated; "SPY,QQQ" or "SPY QQQ" is split, and
 an item that is not shaped like a ticker is reported as an error, not fetched.
 
-Flow score, 0 to 100 (score_flow):
-    40  size: unusual premium on a log scale, from the unusual-premium floor
-        (default $50K) to $50M, capped there
-    20  breadth: number of unusual contracts, log scale, full at 25
-    20  concentration: unusual premium as a share of the day's total premium,
-        full at 50%, so a mega cap's routine volume does not win on its own
-    20  lean: |bullish - bearish premium| / total premium, full at 50%
+Flow score, 0 to 100 (score_flow). Everything scored is time value (extrinsic
+premium = premium minus built-in value; see flow.time_value), because a deep
+in-the-money block (|delta| >= 0.90, often a LEAPS stock replacement or a roll)
+is mostly built-in value and once ranked first on its total premium alone:
+    40  size: unusual extrinsic premium on a log scale, from the unusual-premium
+        floor (default $50K) to $50M, capped there
+    20  breadth: number of unusual contracts that are not deep in the money,
+        log scale, full at 25
+    20  concentration: unusual extrinsic premium as a share of the day's total
+        extrinsic premium, full at 50%, so a mega cap's routine volume does not
+        win on its own
+    20  lean: |bullish - bearish| extrinsic premium (deep ITM left out) / the
+        day's total extrinsic premium, full at 50%
     The short-dated (7 DTE or less) share is shown as context, not scored.
     Names with no unusual contracts score 0, sort last and are left out of
     "ranked" unless include_unranked=True. When more contracts are unusual than
-    the flow tracker lists (top 15), the premium sum is a floor.
+    the flow tracker lists (top 15 by extrinsic premium), the sums are floors.
+    Each row keeps its top few unusual contracts under "contracts", with the
+    volume and open interest at scan time, for `opptions confirm` the next
+    morning. Contracts expiring on or before the session date (same-day
+    expiries in a 4:20 PM scan) are not kept there: they are gone before the
+    overnight open interest update, so they could never be confirmed.
     Contracts that had already expired by the chain's own timestamp are dropped
     before flow.analyze (live_contracts): Cboe keeps an expired expiry in the
     chain until the next session, so a pre-market scan would otherwise rank
@@ -69,6 +80,9 @@ FLOW_COUNT_FULL = 25
 FLOW_SHARE_FULL = 0.50
 FLOW_LEAN_FULL = 0.50
 FLOW_SHORT_HEAVY = 0.60
+FLOW_CONTRACTS = 5  # unusual contracts kept per row for the morning confirmation
+CONTRACT_FIELDS = ("contract", "type", "strike", "expiry", "dte", "volume", "open_interest",
+                   "premium", "extrinsic_premium", "side", "deep_itm")
 
 # GEX weights, distances (in % of spot) and ratios.
 GEX_W_FLIP, GEX_W_NEG, GEX_W_WALL, GEX_W_EXPIRY = 35, 30, 20, 15
@@ -179,33 +193,78 @@ def _sentence(parts):
 
 # ---------------------------------------------------------------- flow score
 
+def _ext(r):
+    """A flow unusual row's extrinsic premium; its premium for rows saved before time value."""
+    ext = _num(r.get("extrinsic_premium"))
+    if ext is None:
+        ext = _num(r.get("premium")) or 0.0
+    return ext
+
+
+def _by_time_value(r):
+    return (-_ext(r), -(_num(r.get("premium")) or 0.0), str(r.get("contract")))
+
+
+def _outlives_session(r, session):
+    """Whether an unusual contract still exists after its session, so the next morning's open
+    interest can show whether its volume became new positions. A contract expiring on or before
+    the session date (same-day 0DTE flow in a 4:20 PM scan) never can, so it is not kept for
+    `opptions confirm`. Without a session date, days to expiry (from the chain's timestamp)
+    decide: 0 or less is left out."""
+    expiry = str(r.get("expiry") or "")[:10]
+    if session and expiry:
+        return expiry > str(session)[:10]
+    dte = _num(r.get("dte"))
+    return dte is None or dte >= 1
+
+
 def score_flow(result):
-    """Ranked row for one flow.analyze() result: score 0-100 plus the fields the desk reads."""
-    listed = [r for r in result.get("unusual") or [] if isinstance(r, dict)]
+    """Ranked row for one flow.analyze() result: score 0-100 plus the fields the desk reads.
+
+    Scored on time value (see the module docstring). "unusual_premium", "unusual_share",
+    "bullish_premium" and "bearish_premium" still count total premium, as before; "lean"
+    and "lean_strength" are now the time-value lean with deep ITM contracts left out.
+    """
+    listed = sorted((r for r in result.get("unusual") or [] if isinstance(r, dict)), key=_by_time_value)
     count = int(_num(result.get("unusual_count")) or len(listed))
     prem = sum(_num(r.get("premium")) or 0.0 for r in listed)
+    ext_prem = sum(_ext(r) for r in listed)
+    deep_listed = sum(1 for r in listed if r.get("deep_itm") is True)
+    deep_count = _num(result.get("unusual_deep_itm_count"))
+    deep_count = deep_listed if deep_count is None else int(deep_count)
+    breadth = max(0, count - deep_count)
     partial = count > len(listed)
     totals = result.get("totals") or {}
     total_prem = _num(totals.get("total_premium")) or 0.0
     sent = result.get("sentiment") or {}
     bull = _num(sent.get("bullish_premium")) or 0.0
     bear = _num(sent.get("bearish_premium")) or 0.0
+    ex = result.get("extrinsic")
+    if isinstance(ex, dict):
+        total_ext = _num(ex.get("total_premium")) or 0.0
+        ext_bull = _num(ex.get("bullish_premium")) or 0.0
+        ext_bear = _num(ex.get("bearish_premium")) or 0.0
+        lean = ex.get("lean") or "mixed"
+    else:  # a result from before time value: fall back to total premium
+        total_ext, ext_bull, ext_bear, lean = total_prem, bull, bear, sent.get("lean") or "mixed"
     share = prem / total_prem if total_prem > 0 else None
-    lean_strength = abs(bull - bear) / total_prem if total_prem > 0 else 0.0
+    ext_share = ext_prem / total_ext if total_ext > 0 else None
+    lean_strength = abs(ext_bull - ext_bear) / total_ext if total_ext > 0 else 0.0
     floor = _num((result.get("thresholds") or {}).get("min_premium")) or flow.DEFAULT_MIN_PREMIUM
     floor = max(floor, 1.0)
 
     parts = {"size": 0.0, "breadth": 0.0, "concentration": 0.0, "lean": 0.0}
-    if count > 0 and prem > 0:
+    if count > 0:
         span = math.log10(FLOW_SIZE_FULL / floor) if FLOW_SIZE_FULL > floor else 0.0
-        size = _clip(math.log10(max(prem, floor) / floor) / span) if span > 0 else 1.0
+        size = _clip(math.log10(max(ext_prem, floor) / floor) / span) if span > 0 else 1.0
         parts = {
-            "size": FLOW_W_SIZE * size,
-            "breadth": FLOW_W_BREADTH * _clip(math.log1p(count) / math.log1p(FLOW_COUNT_FULL)),
-            "concentration": FLOW_W_CONC * _clip((share or 0.0) / FLOW_SHARE_FULL),
+            "size": FLOW_W_SIZE * size if ext_prem > 0 else 0.0,
+            "breadth": FLOW_W_BREADTH * _clip(math.log1p(breadth) / math.log1p(FLOW_COUNT_FULL)),
+            "concentration": FLOW_W_CONC * _clip((ext_share or 0.0) / FLOW_SHARE_FULL),
             "lean": FLOW_W_LEAN * _clip(lean_strength / FLOW_LEAN_FULL),
         }
-    top = max(listed, key=lambda r: _num(r.get("premium")) or 0.0, default=None)
+    top = listed[0] if listed else None
+    keep = [r for r in listed if _outlives_session(r, result.get("session_date"))][:FLOW_CONTRACTS]
     row = {
         "symbol": result.get("symbol"),
         "score": round(sum(parts.values()), 1),
@@ -214,18 +273,25 @@ def score_flow(result):
         "as_of": result.get("as_of"),
         "session_date": result.get("session_date"),
         "unusual_premium": round(prem, 2),
+        "unusual_extrinsic_premium": round(ext_prem, 2),
         "unusual_premium_partial": partial,
         "unusual_count": count,
+        "unusual_deep_itm_count": deep_count,
         "unusual_share": _round(share, 3),
-        "lean": sent.get("lean") or "mixed",
+        "unusual_extrinsic_share": _round(ext_share, 3),
+        "lean": lean,
         "lean_strength": round(lean_strength, 3),
         "bullish_premium": round(bull, 2),
         "bearish_premium": round(bear, 2),
+        "bullish_extrinsic": round(ext_bull, 2),
+        "bearish_extrinsic": round(ext_bear, 2),
         "put_call_premium_ratio": _num(totals.get("put_call_premium_ratio")),
         "short_dated_share": _num((result.get("short_dated") or {}).get("share")),
         "top_contract": None if top is None else {
-            k: _plain(top.get(k)) for k in ("contract", "type", "strike", "expiry", "dte",
-                                            "premium", "side", "volume", "open_interest")},
+            k: _plain(top.get(k)) for k in ("contract", "type", "strike", "expiry", "dte", "premium",
+                                            "extrinsic_premium", "deep_itm", "side", "volume",
+                                            "open_interest")},
+        "contracts": [{k: _plain(r.get(k)) for k in CONTRACT_FIELDS} for r in keep],
         "total_volume": int(_num(totals.get("total_volume")) or 0),
     }
     row["why"] = flow_why(row)
@@ -249,24 +315,38 @@ def flow_why(row):
         return "No contract cleared the unusual rule, so activity looks routine."
     n = row["unusual_count"]
     floor = "at least " if row["unusual_premium_partial"] else ""
-    parts = [f"{n} unusual contract{'s' if n != 1 else ''} worth {floor}~{_money(row['unusual_premium'])}"
-             + (f" ({_share(row['unusual_share'])} of the day's premium)"
-                if row["unusual_share"] is not None else "")]
-    bull, bear = row["bullish_premium"], row["bearish_premium"]
+    ext_share = row.get("unusual_extrinsic_share")
+    parts = [f"{n} unusual contract{'s' if n != 1 else ''} worth {floor}~{_money(row['unusual_premium'])}, "
+             f"{floor}~{_money(row.get('unusual_extrinsic_premium'))} of it time value"
+             + (f" ({_share(ext_share)} of the day's time value)" if ext_share is not None else "")]
+    deep = row.get("unusual_deep_itm_count") or 0
+    if deep:
+        one = deep == 1
+        who = ("it is" if n == 1 else "all are" if deep >= n else "1 of them is" if one
+               else f"{deep} of them are")
+        parts.append(f"{who} deep in the money, mostly built-in value (often stock replacement or rolls), "
+                     f"so {'it is' if one else 'those are'} left out of the contract count and the lean")
+    bull, bear = row.get("bullish_extrinsic", 0.0), row.get("bearish_extrinsic", 0.0)
     if row["lean"] in ("bullish", "bearish"):
-        parts.append(f"premium leans {row['lean']} (~{_money(bull)} bullish-looking vs "
+        parts.append(f"time value leans {row['lean']} (~{_money(bull)} bullish-looking vs "
                      f"~{_money(bear)} bearish-looking)")
     else:
-        parts.append(f"no clear lean (~{_money(bull)} bullish-looking vs ~{_money(bear)} bearish-looking)")
+        parts.append(f"no clear lean in time value (~{_money(bull)} bullish-looking vs "
+                     f"~{_money(bear)} bearish-looking)")
     short = row["short_dated_share"]
     if short is not None:
         parts.append(f"{_share(short)} of premium expires within {flow.SHORT_DTE} days"
                      + (", which tends to fade fast" if short > FLOW_SHORT_HEAVY else ""))
     top = row["top_contract"]
     if top:
-        parts.append(f"largest is the {_contract_label(top)} (~{_money(_num(top.get('premium')))}, "
-                     f"{_side_text(top.get('side'))})")
+        parts.append(f"largest by time value is the {_contract_label(top)}{_deep_tag(top)} "
+                     f"(~{_money(_num(top.get('extrinsic_premium')))} time value of "
+                     f"~{_money(_num(top.get('premium')))}, {_side_text(top.get('side'))})")
     return _sentence(parts)
+
+
+def _deep_tag(c):
+    return ", deep ITM" if c.get("deep_itm") is True else ""
 
 
 # ---------------------------------------------------------------- GEX score
@@ -352,18 +432,23 @@ def gex_why(row):
     tags = row["tags"]
     parts = []
     if "near_flip" in tags:
-        parts.append(f"spot is {_spot_vs(row['flip_pct'])} the gamma flip ({_strike(row['flip'])}), "
-                     "so the regime could change on a small move")
+        move = ("so the regime could change right here" if abs(row["flip_pct"]) < 0.005
+                else f"so a move of about {abs(row['flip_pct']):.2f}% would cross it and change the regime")
+        parts.append(f"spot is {_spot_vs(row['flip_pct'])} the gamma flip ({_strike(row['flip'])}), {move}")
     if "negative_gamma" in tags:
         parts.append(f"negative gamma with net at {abs(row['net_to_gross_pct']):.0f}% of gross, "
                      "so hedging tends to amplify moves"
                      + (" (borderline: the IV model disagrees on the sign)" if row["regime_uncertain"] else ""))
     if "near_call_wall" in tags:
+        cleared = row["call_wall_pct"] <= -0.005
         parts.append(f"spot is {_spot_vs(row['call_wall_pct'])} the call wall ({_strike(row['call_wall'])}), "
-                     "where price tends to stall or pin")
+                     + ("already through it; a cleared call wall can act as a floor or a magnet"
+                        if cleared else "where price tends to stall or pin"))
     if "near_put_wall" in tags:
+        broken = row["put_wall_pct"] >= 0.005
         parts.append(f"spot is {_spot_vs(row['put_wall_pct'])} the put wall ({_strike(row['put_wall'])}), "
-                     "which tends to act as support, with moves speeding up if it breaks")
+                     + ("already under it, where moves tend to speed up rather than find support"
+                        if broken else "which tends to act as support, with moves speeding up if it breaks"))
     if "expiry_heavy" in tags:
         parts.append(f"{_share(row['nearest_expiry_share'])} of gamma expires {row['nearest_expiry']} "
                      f"({row['nearest_expiry_dte']} DTE), after which these levels tend to lose pull")
@@ -387,7 +472,7 @@ def _rankable(kind, row):
 
 
 def _sort_key(kind, row):
-    tiebreak = -row["unusual_premium"] if kind == "flow" else -len(row["tags"])
+    tiebreak = -row["unusual_extrinsic_premium"] if kind == "flow" else -len(row["tags"])
     return (not _rankable(kind, row), -row["score"], tiebreak, row["symbol"])
 
 
@@ -478,15 +563,20 @@ CAVEAT_COMMON = ("Cboe's free chain is about 15 minutes delayed and open interes
 CAVEAT_KIND = {
     "flow": ("Flow here is volume-based (each contract's total for the day against open interest), "
              "not sweeps or blocks, and the side comes only from where the last trade printed. "
+             "Scores use time value (premium minus built-in value): deep in-the-money options "
+             "(|delta| 0.90 or more) are mostly built-in value, often stock replacement or rolls, so "
+             "they are left out of the contract count and the lean. "
              "Contracts that had already expired by the chain's timestamp are left out, so totals "
-             "can be lower than in the flow tracker's own report."),
+             "can be lower than in the flow tracker's own report. Run `opptions confirm` on the saved "
+             "JSON the next morning to see which flagged contracts became new positions."),
     "gex": ("GEX uses a naive sign model (dealers assumed long calls and short puts); real "
             "positioning is not public and can be the opposite, so treat levels as rough zones."),
 }
 SCORE_LINE = {
-    "flow": ("Score 0-100: unusual premium (log scale, 40), number of unusual contracts (20), "
-             "unusual share of the day's premium (20) and how one-sided the lean is (20). "
-             "Short-dated share is context only."),
+    "flow": ("Score 0-100, all in time value: unusual extrinsic premium (log scale, 40), number of "
+             "unusual contracts that are not deep in the money (20), unusual share of the day's time "
+             "value (20) and how one-sided the time-value lean is (20). Short-dated share is context "
+             "only."),
     "gex": ("Score 0-100 from distances and ratios only, not dollar size: spot near the flip (35), "
             "negative gamma strength (30), spot near a wall (20), gamma expiring within "
             f"{EXPIRY_MAX_DTE} days (15)."),
@@ -521,17 +611,20 @@ def _cell(text):
 
 
 def _flow_table(rows, start):
-    lines = ["| # | Symbol | Score | Spot | Unusual premium (n) | Lean | P/C premium | ≤7 DTE | "
+    lines = ["| # | Symbol | Score | Spot | Unusual time value (premium, n) | Lean | P/C premium | ≤7 DTE | "
              "Top contract | Why |",
              "|---|---|---|---|---|---|---|---|---|---|"]
     for i, r in enumerate(rows, start):
         top = r["top_contract"]
-        top_txt = (f"{_contract_label(top)} (~{_money(_num(top.get('premium')))}, {_side_text(top.get('side'))})"
-                   if top else "none")
-        prem = ("≥" if r["unusual_premium_partial"] else "") + _money(r["unusual_premium"])
+        top_txt = (f"{_contract_label(top)}{_deep_tag(top)} (~{_money(_num(top.get('extrinsic_premium')))} "
+                   f"time value, {_side_text(top.get('side'))})" if top else "none")
+        ge = "≥" if r["unusual_premium_partial"] else ""
+        deep = r.get("unusual_deep_itm_count") or 0
+        n = f"{r['unusual_count']}" + (f", {deep} deep ITM" if deep else "")
+        prem = f"{ge}{_money(r['unusual_extrinsic_premium'])} ({ge}{_money(r['unusual_premium'])}, {n})"
         pc = "n/a" if r["put_call_premium_ratio"] is None else f"{r['put_call_premium_ratio']:.2f}"
         lines.append(f"| {i} | {r['symbol']} | {r['score']:.1f} | {_price(r['spot'])} | "
-                     f"{prem} ({r['unusual_count']}) | {r['lean']} | {pc} | "
+                     f"{prem} | {r['lean']} | {pc} | "
                      f"{_share(r['short_dated_share'])} | {_cell(top_txt)} | {_cell(r['why'])} |")
     return lines
 

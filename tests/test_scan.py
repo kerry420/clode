@@ -21,6 +21,7 @@ import contextlib
 import copy
 import io
 import json
+import math
 import os
 import re
 import tempfile
@@ -133,8 +134,15 @@ class FlowScoreTest(unittest.TestCase):
         self.assertEqual(row["lean"], "bullish")
         self.assertEqual(row["put_call_premium_ratio"], 0.67)
         self.assertAlmostEqual(row["unusual_share"], round(528_000 / 933_840, 3))
-        # |417,000 - 232,500| / 933,840
-        self.assertAlmostEqual(row["lean_strength"], 0.198, places=3)
+        # Time value: all four unusual contracts are at or out of the money, so their extrinsic
+        # premium is their whole premium. The day's extrinsic premium is 933,840 less the 105P's
+        # $5 of built-in value (249 * 5 * 100 = 124,500) = 809,340.
+        self.assertEqual(row["unusual_extrinsic_premium"], 528_000)
+        self.assertEqual(row["unusual_extrinsic_share"], round(528_000 / 809_340, 3))
+        self.assertEqual(row["unusual_deep_itm_count"], 0)
+        # Lean strength is now in time value: |417,000 - 232,500| / 809,340 (was / 933,840 = 0.198)
+        self.assertAlmostEqual(row["lean_strength"], 0.228, places=3)
+        self.assertEqual((row["bullish_extrinsic"], row["bearish_extrinsic"]), (417_000, 232_500))
         self.assertEqual(row["short_dated_share"], 0.487)
         top = row["top_contract"]
         self.assertEqual((top["contract"], top["premium"], top["side"]),
@@ -161,7 +169,7 @@ class FlowScoreTest(unittest.TestCase):
 
     def test_partial_premium_when_more_are_unusual_than_listed(self):
         res = flow.analyze(FLOW)
-        res["unusual_count"] = 40  # flow lists only its top 15 by premium
+        res["unusual_count"] = 40  # flow lists only its top 15 by time value
         row = scan.score_flow(res)
         self.assertTrue(row["unusual_premium_partial"])
         self.assertIn("at least", row["why"])
@@ -661,6 +669,157 @@ class ScoreHardeningTest(unittest.TestCase):
         json.dumps(row, allow_nan=False)
 
 
+def option(sym, bid, ask, last, volume, oi, delta):
+    return {"option": sym, "bid": bid, "ask": ask, "last_trade_price": last, "volume": volume,
+            "open_interest": oi, "delta": delta, "gamma": 0.001, "iv": 0.3, "theo": (bid + ask) / 2,
+            "last_trade_time": "2026-09-30T15:50:00"}
+
+
+def deep_chain(extra=()):
+    """DEEP, spot 331 on 2026-09-30, like the live AAPL report: its only unusual contract is a
+    deep in-the-money LEAPS call block, 1,000 x 2029-01-19 170C at 173 (delta 0.97) printed at
+    the ask: premium $17.3M, of which 161 is built-in value and 12 is time value ($1.2M).
+    Two routine contracts (volume below open interest) trade $1.15M of time value."""
+    return {"timestamp": "2026-09-30 16:15:00",
+            "data": {"symbol": "DEEP", "current_price": 331.0, "iv30": 25.0, "options": [
+                option("DEEP290119C00170000", 172.0, 174.0, 174.0, 1000, 50, 0.97),
+                option("DEEP261016C00335000", 6.9, 7.1, 7.0, 900, 4000, 0.45),
+                option("DEEP261016P00325000", 6.4, 6.6, 6.5, 800, 3000, -0.40),
+                *extra]}}
+
+
+def without_time_value(res):
+    """A flow result as it looked before time value, so score_flow scores total premium."""
+    res = copy.deepcopy(res)
+    for k in ("extrinsic", "unusual_deep_itm_count"):
+        res.pop(k)
+    for r in res["unusual"]:
+        for k in ("intrinsic", "extrinsic", "extrinsic_premium", "deep_itm"):
+            r.pop(k)
+    return res
+
+
+class DeepInTheMoneyTest(unittest.TestCase):
+    def test_deep_itm_leaps_block_ranks_below_smaller_otm_activity(self):
+        raws = {"DEEP": deep_chain(), "MID": flow_raw()}
+        res = scan.scan("flow", list(raws), fetch=from_dict(raws))
+        self.assertEqual([r["symbol"] for r in res["ranked"]], ["MID", "DEEP"])
+        mid, deep = res["ranked"]
+        # MID is smaller both in premium ($528K vs $17.3M) and in time value ($528K vs $1.2M).
+        self.assertEqual((deep["unusual_premium"], deep["unusual_extrinsic_premium"]), (17_300_000, 1_200_000))
+        self.assertGreater(deep["unusual_premium"], 30 * mid["unusual_premium"])
+        self.assertGreater(deep["unusual_extrinsic_premium"], mid["unusual_extrinsic_premium"])
+        # Deep ITM counts for no breadth and no lean.
+        self.assertEqual(deep["unusual_deep_itm_count"], 1)
+        self.assertEqual((deep["score_parts"]["breadth"], deep["score_parts"]["lean"]), (0, 0))
+        self.assertEqual(deep["lean"], "mixed")
+        self.assertTrue(deep["top_contract"]["deep_itm"])
+        self.assertIn("it is deep in the money", deep["why"])
+        self.assertIn("stock replacement or rolls", deep["why"])
+        self.assertIsNone(TRADE_WORDS.search(deep["why"]))
+
+    def test_the_drop_against_total_premium_scoring(self):
+        deep_res = flow.analyze(deep_chain())
+        mid_res = flow.analyze(FLOW)
+        old_deep, old_mid = (scan.score_flow(without_time_value(r))["score"] for r in (deep_res, mid_res))
+        new_deep, new_mid = scan.score_flow(deep_res)["score"], scan.score_flow(mid_res)["score"]
+        self.assertGreater(old_deep, old_mid)       # what the first live run showed: DEEP on top
+        self.assertLess(new_deep, new_mid)
+        self.assertGreaterEqual(old_deep - new_deep, 30)
+        # Hand-checked. The day: 17.3M (block) + 630K (335C, 7.00) + 520K (325P, 6.50) premium;
+        # time value 1.2M + 630K + 520K = 2.35M.
+        # Old: size 40 * log10(17.3M / 50K) / 3 = 33.86; breadth 20 * ln 2 / ln 26 = 4.25;
+        #      concentration 17.3 / 18.45 = 94% -> 20; lean 17.3 / 18.45 -> 20. Total 78.1.
+        # New: size 40 * log10(1.2M / 50K) / 3 = 18.40; breadth 0 (deep); concentration
+        #      1.2 / 2.35 = 51% -> 20 (the block still earns it in so small a chain); lean 0.
+        self.assertEqual((old_deep, new_deep), (78.1, 38.4))
+        self.assertEqual(scan.score_flow(deep_res)["score_parts"],
+                         {"size": 18.4, "breadth": 0.0, "concentration": 20.0, "lean": 0.0})
+
+    def test_deep_itm_does_not_count_toward_breadth(self):
+        # Add two out-of-the-money unusual calls: 3 unusual contracts, 2 of them count.
+        extra = (option("DEEP261016C00350000", 2.9, 3.1, 3.1, 5000, 100, 0.30),
+                 option("DEEP261016C00360000", 0.9, 1.1, 1.1, 2000, 100, 0.15))
+        row = scan.score_flow(flow.analyze(deep_chain(extra)))
+        self.assertEqual((row["unusual_count"], row["unusual_deep_itm_count"]), (3, 1))
+        two = scan.FLOW_W_BREADTH * math.log1p(2) / math.log1p(scan.FLOW_COUNT_FULL)
+        self.assertAlmostEqual(row["score_parts"]["breadth"], round(two, 1))
+        # Top contract by time value: the 350 call ($1.5M), not the $17.3M deep block ($1.2M).
+        self.assertEqual(row["top_contract"]["contract"], "DEEP261016C00350000")
+        self.assertEqual([c["contract"] for c in row["contracts"]],
+                         ["DEEP261016C00350000", "DEEP290119C00170000", "DEEP261016C00360000"])
+        self.assertIn("; 1 of them is deep in the money, mostly built-in value (often stock replacement "
+                      "or rolls), so it is left out of the contract count and the lean;", row["why"])
+        self.assertEqual(row["lean"], "bullish")    # from the two calls at the ask, block left out
+
+    def test_contracts_are_kept_for_the_morning_confirmation(self):
+        res = scan.scan("flow", ["MID", "BIG"], fetch=from_dict(FLOW_RAWS))
+        rows = {r["symbol"]: r for r in res["ranked"]}
+        mid = rows["MID"]["contracts"]
+        self.assertEqual([c["contract"] for c in mid],
+                         ["ACME261002C00105000", "ACME261016C00100000",
+                          "ACME261016P00100000", "ACME261016C00110000"])
+        self.assertEqual(set(mid[0]), set(scan.CONTRACT_FIELDS))
+        self.assertEqual((mid[0]["volume"], mid[0]["open_interest"], mid[0]["side"], mid[0]["deep_itm"]),
+                         (2000, 500, "ask", False))
+        self.assertEqual(mid[0]["extrinsic_premium"], 230_000)
+        big = rows["BIG"]["contracts"]
+        self.assertEqual(rows["BIG"]["unusual_count"], 9)
+        self.assertEqual(len(big), scan.FLOW_CONTRACTS)
+        ext = [c["extrinsic_premium"] for c in big]
+        self.assertEqual(ext, sorted(ext, reverse=True))
+        json.dumps(res, allow_nan=False)
+
+    def test_markdown_names_time_value_and_deep_itm(self):
+        raws = {"DEEP": deep_chain(), "MID": flow_raw()}
+        md = scan.to_markdown(scan.scan("flow", list(raws), fetch=from_dict(raws)))
+        self.assertIn("Unusual time value (premium, n)", md)
+        self.assertIn("$1.20M ($17.30M, 1, 1 deep ITM)", md)
+        self.assertIn("170 call 2029-01-19, deep ITM (~$1.20M time value", md)
+        self.assertIn("all in time value", md)
+        self.assertIn("deep in-the-money options (|delta| 0.90 or more)", md)
+        self.assertIn("opptions confirm", md)
+        self.assertIsNone(TRADE_WORDS.search(md))
+
+
+class ConfirmableContractsTest(unittest.TestCase):
+    """The "contracts" kept for `opptions confirm` and the deep ITM wording of the why line."""
+
+    def test_same_day_expiry_is_not_kept_for_the_morning_check(self):
+        # A 4:20 PM scan on 2026-09-30 with a same-day (0DTE) 335 call: 400,000 x 0.05 (bid 0,
+        # ask 0.05) = $2.0M, all time value, so it is the top contract. It expires before the
+        # overnight open interest update, so "contracts" skips it.
+        extra = (option("DEEP260930C00335000", 0.0, 0.05, 0.05, 400_000, 1000, 0.30),
+                 option("DEEP261016C00350000", 2.9, 3.1, 3.1, 5000, 100, 0.30))
+        row = scan.score_flow(flow.analyze(deep_chain(extra)))
+        self.assertEqual(row["session_date"], "2026-09-30")
+        self.assertEqual((row["top_contract"]["contract"], row["top_contract"]["dte"]),
+                         ("DEEP260930C00335000", 0))
+        self.assertEqual(row["top_contract"]["extrinsic_premium"], 2_000_000)
+        self.assertEqual([c["contract"] for c in row["contracts"]],
+                         ["DEEP261016C00350000", "DEEP290119C00170000"])
+
+    def test_outlives_session(self):
+        self.assertFalse(scan._outlives_session({"expiry": "2026-09-30", "dte": 0}, "2026-09-30"))
+        self.assertTrue(scan._outlives_session({"expiry": "2026-10-01", "dte": 1}, "2026-09-30"))
+        # The session date decides over dte (a late-evening UTC timestamp can make dte 0).
+        self.assertTrue(scan._outlives_session({"expiry": "2026-10-01", "dte": 0}, "2026-09-30"))
+        # No session date: dte decides; nothing to go on keeps the contract.
+        self.assertFalse(scan._outlives_session({"dte": 0}, None))
+        self.assertTrue(scan._outlives_session({"dte": 3}, None))
+        self.assertTrue(scan._outlives_session({}, None))
+
+    def test_why_line_with_two_of_three_deep(self):
+        extra = (option("DEEP290119C00200000", 132.0, 134.0, 134.0, 1000, 50, 0.95),
+                 option("DEEP261016C00350000", 2.9, 3.1, 3.1, 5000, 100, 0.30))
+        row = scan.score_flow(flow.analyze(deep_chain(extra)))
+        self.assertEqual((row["unusual_count"], row["unusual_deep_itm_count"]), (3, 2))
+        self.assertIn("; 2 of them are deep in the money, mostly built-in value (often stock replacement "
+                      "or rolls), so those are left out of the contract count and the lean;", row["why"])
+        one = scan.FLOW_W_BREADTH * math.log1p(1) / math.log1p(scan.FLOW_COUNT_FULL)
+        self.assertAlmostEqual(row["score_parts"]["breadth"], round(one, 1))
+
+
 def older_session_raw():
     """flow_chain.json with every trade moved to 09/29: the chain still says 09/30, so the flow
     tracker reads the 09/29 session."""
@@ -773,3 +932,42 @@ class CliHonestyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GexWhyWallSideTest(unittest.TestCase):
+    """Wall and flip wording depends on which side of the level spot sits."""
+
+    def _row(self, **kw):
+        row = {"regime": "positive", "spot": 100.0, "tags": [], "flip": 101.32, "flip_pct": 1.32,
+               "call_wall": 100.5, "call_wall_pct": 0.5, "put_wall": 99.5, "put_wall_pct": -0.5,
+               "net_to_gross_pct": 20.0, "regime_uncertain": False,
+               "nearest_expiry": "2026-10-02", "nearest_expiry_dte": 1, "nearest_expiry_share": 0.1}
+        row.update(kw)
+        return row
+
+    def test_put_wall_below_spot_is_support(self):
+        why = scan.gex_why(self._row(tags=["near_put_wall"]))
+        self.assertIn("0.50% above the put wall", why)
+        self.assertIn("tends to act as support", why)
+
+    def test_put_wall_above_spot_is_already_broken(self):
+        # Live case from 2026-10-01: SBUX put wall 95 at +1.17% from spot.
+        why = scan.gex_why(self._row(tags=["near_put_wall"], put_wall=95.0, put_wall_pct=0.22))
+        self.assertIn("0.22% below the put wall", why)
+        self.assertIn("already under it", why)
+        self.assertNotIn("act as support", why)
+
+    def test_call_wall_below_spot_is_cleared(self):
+        why = scan.gex_why(self._row(tags=["near_call_wall"], call_wall=99.6, call_wall_pct=-0.4))
+        self.assertIn("0.40% above the call wall", why)
+        self.assertIn("already through it", why)
+        self.assertNotIn("stall or pin", why)
+
+    def test_call_wall_above_spot_pins(self):
+        why = scan.gex_why(self._row(tags=["near_call_wall"]))
+        self.assertIn("stall or pin", why)
+
+    def test_flip_states_the_distance(self):
+        why = scan.gex_why(self._row(tags=["near_flip"]))
+        self.assertIn("a move of about 1.32% would cross it", why)
+        self.assertNotIn("small move", why)

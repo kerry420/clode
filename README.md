@@ -45,6 +45,7 @@ python3 -m opptions earnings AAPL            # next report, implied move, beat h
 python3 -m opptions packet NVDA AMD --out packets/   # one packet per symbol: packets/NVDA-YYYY-MM-DD.md
 python3 -m opptions scan flow --top 10       # desk scan: rank ~80 liquid names by unusual activity
 python3 -m opptions scan gex --universe watchlist.md --json   # rank by GEX setups (flip, walls, gamma regime)
+python3 -m opptions confirm scan-flow.json   # next morning: check a saved "scan flow --json" against overnight open interest
 ```
 
 - Index symbols such as `SPX`, `NDX`, `RUT` and `VIX` are mapped to Cboe's
@@ -170,6 +171,7 @@ opptions/
   gex.py flow.py news.py earnings.py   the four trackers
   packet.py     one Markdown packet per symbol from all trackers
   scan.py universe.py   desk scan: rank a universe by flow or GEX setups
+  confirm.py    next-morning check of a saved flow scan against overnight open interest
 agents/         briefs for the Claude agent team
 examples/       build_sample.py and the synthetic sample-packet.md
 tests/          unittest suites and fixtures

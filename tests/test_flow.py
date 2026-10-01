@@ -273,10 +273,14 @@ class TestAnalyzeChain(unittest.TestCase):
         self.assertEqual([x["contract"] for x in r["unusual"]], ["ACME261002C00105000"])
         self.assertEqual(r["thresholds"]["min_volume"], 1000.0)
         r = flow.analyze(self.raw, min_volume=100, min_premium=10_000)
-        # adds 115C (18k, vol 3000 > OI 100) and 105P (vol 249 > OI 10, 151,890)
+        # adds 115C (18k, vol 3000 > OI 100) and 105P (vol 249 > OI 10, 151,890).
+        # Ranked by time value: the 105P is $5 in the money, so only 249 * (6.10 - 5) * 100
+        # = 27,390 of its 151,890 is extrinsic, and it ranks 5th, not 2nd as by premium.
         self.assertEqual(r["unusual_count"], 6)
-        self.assertEqual(r["unusual"][0]["contract"], "ACME261002C00105000")
-        self.assertEqual(r["unusual"][1]["contract"], "ACME261016P00105000")
+        self.assertEqual([x["contract"] for x in r["unusual"]],
+                         ["ACME261002C00105000", "ACME261016C00100000", "ACME261016P00100000",
+                          "ACME261016C00110000", "ACME261016P00105000", "ACME261002C00115000"])
+        self.assertAlmostEqual(r["unusual"][4]["extrinsic_premium"], 27_390, places=2)
 
     def test_markdown(self):
         md = flow.to_markdown(self.r)
@@ -410,7 +414,173 @@ class TestEdgeCases(unittest.TestCase):
         self.assertEqual(r["unusual_count"], 20)
         self.assertEqual(len(r["unusual"]), flow.TOP_UNUSUAL)
         self.assertEqual(r["unusual"][0]["volume"], 519)
-        self.assertIn("top 15 by premium", flow.to_markdown(r))
+        self.assertIn("top 15 by time value (extrinsic premium)", flow.to_markdown(r))
+
+
+def contract(opt_type, strike, mid, volume, delta, last=None):
+    """A normalized contract with just the fields flow.time_value reads."""
+    return {"type": opt_type, "strike": strike, "mid": mid, "last": mid if last is None else last,
+            "volume": volume, "delta": delta}
+
+
+def option(sym, bid, ask, last, volume, oi, delta, ltt="2026-09-30T15:50:00"):
+    return {"option": sym, "bid": bid, "ask": ask, "last_trade_price": last, "volume": volume,
+            "open_interest": oi, "delta": delta, "gamma": 0.001, "iv": 0.3, "theo": (bid + ask) / 2,
+            "last_trade_time": ltt}
+
+
+def leaps_chain(deep_last=174.0):
+    """LEAP (spot 331, like the live AAPL report) on 2026-09-30.
+
+      #  contract          vol    OI    mid     premium     intrinsic  extrinsic  ext premium  delta
+      1  2029-01-19 170C  1,000    50   173.0  17,300,000    161.0      12.0      1,200,000    0.97 deep
+      2  2026-10-16 350C  5,000   100     3.0   1,500,000      0.0       3.0      1,500,000    0.30
+      3  2026-10-16 335C    900  4,000    7.0     630,000      0.0       7.0        630,000    0.45 (vol < OI)
+    By premium the deep ITM block is first; by time value the 350 call is.
+    """
+    return {"timestamp": "2026-09-30 16:15:00",
+            "data": {"symbol": "LEAP", "current_price": 331.0, "iv30": 25.0, "options": [
+                option("LEAP290119C00170000", 172.0, 174.0, deep_last, 1000, 50, 0.97),
+                option("LEAP261016C00350000", 2.9, 3.1, 3.1, 5000, 100, 0.30),
+                option("LEAP261016C00335000", 6.9, 7.1, 7.0, 900, 4000, 0.45),
+            ]}}
+
+
+class TestTimeValue(unittest.TestCase):
+    """Hand-checked intrinsic, extrinsic and deep-ITM flags."""
+
+    def test_itm_call(self):
+        # spot 331, 170 call at 173: intrinsic 331 - 170 = 161, extrinsic 12,
+        # 1,000 contracts * 12 * 100 = 1,200,000 of the 17,300,000 premium.
+        c = contract("C", 170.0, 173.0, 1000, 0.97)
+        self.assertEqual(flow.intrinsic_value("C", 170.0, 331.0), 161.0)
+        self.assertEqual(flow.time_value(c, 331.0), (161.0, 12.0, 1_200_000.0, True))
+        self.assertEqual(flow.premium(c), 17_300_000)
+
+    def test_itm_put(self):
+        # spot 100, 105 put at 6.10: intrinsic 5, extrinsic 1.10, 249 * 1.10 * 100 = 27,390.
+        intrinsic, extrinsic, ext_prem, deep = flow.time_value(contract("P", 105.0, 6.10, 249, -0.70), 100.0)
+        self.assertEqual(intrinsic, 5.0)
+        self.assertAlmostEqual(extrinsic, 1.10, places=9)
+        self.assertAlmostEqual(ext_prem, 27_390, places=6)
+        self.assertFalse(deep)
+        # A put below spot is out of the money: no intrinsic value.
+        self.assertEqual(flow.intrinsic_value("P", 95.0, 100.0), 0.0)
+
+    def test_otm_extrinsic_is_the_whole_price(self):
+        c = contract("C", 105.0, 1.15, 2000, 0.25)
+        intrinsic, extrinsic, ext_prem, deep = flow.time_value(c, 100.0)
+        self.assertEqual((intrinsic, extrinsic, deep), (0.0, 1.15, False))
+        self.assertAlmostEqual(ext_prem, flow.premium(c), places=6)       # 230,000
+        self.assertAlmostEqual(ext_prem, 230_000, places=6)
+
+    def test_uses_last_when_there_is_no_mid_and_never_goes_negative(self):
+        # mid 0 -> last 20.5, as premium() does: intrinsic 20, extrinsic 0.50.
+        self.assertEqual(flow.time_value(contract("C", 80.0, 0.0, 100, 0.95, last=20.5), 100.0)[:3],
+                         (20.0, 0.5, 5_000.0))
+        # A stale quote below intrinsic counts as no time value, not a negative one.
+        self.assertEqual(flow.time_value(contract("C", 80.0, 19.0, 100, 0.95), 100.0)[1:3], (0.0, 0.0))
+
+    def test_deep_itm_by_delta(self):
+        self.assertTrue(flow.time_value(contract("C", 80.0, 21.0, 10, 0.90), 100.0)[3])    # edge counts
+        self.assertTrue(flow.time_value(contract("P", 130.0, 30.5, 10, -0.92), 100.0)[3])
+        self.assertFalse(flow.time_value(contract("C", 80.0, 21.0, 10, 0.89), 100.0)[3])
+        # With a delta, the delta decides even when intrinsic is 95% of the price.
+        self.assertFalse(flow.time_value(contract("C", 81.0, 20.0, 10, 0.85), 100.0)[3])
+
+    def test_deep_itm_fallback_without_delta(self):
+        # delta missing (0): 161 / 173 = 0.93 of the price is intrinsic -> deep.
+        self.assertTrue(flow.time_value(contract("C", 170.0, 173.0, 10, 0.0), 331.0)[3])
+        # 90 / 100 exactly -> deep; 5 / 6.10 = 0.82 -> not deep.
+        self.assertTrue(flow.time_value(contract("P", 190.0, 100.0, 10, 0.0), 100.0)[3])
+        self.assertFalse(flow.time_value(contract("P", 105.0, 6.10, 10, 0.0), 100.0)[3])
+        self.assertFalse(flow.time_value(contract("C", 105.0, 1.15, 10, 0.0), 100.0)[3])   # OTM
+
+    def test_unknown_spot(self):
+        # No spot: intrinsic is blank, the whole price is time value, delta alone can flag deep.
+        self.assertEqual(flow.time_value(contract("C", 170.0, 173.0, 10, 0.0), 0.0), (None, 173.0, 173_000.0, False))
+        self.assertTrue(flow.time_value(contract("C", 170.0, 173.0, 10, 0.97), 0.0)[3])
+
+    def test_fixture_rows_and_aggregates(self):
+        r = flow.analyze(load("flow_chain.json"))
+        top = r["unusual"][0]
+        self.assertEqual((top["intrinsic"], top["extrinsic"], top["extrinsic_premium"], top["deep_itm"]),
+                         (0.0, 1.15, 230_000.0, False))
+        self.assertEqual(r["unusual_deep_itm_count"], 0)
+        ex = r["extrinsic"]
+        # Only the 105P (vol 249, $5 in the money) has built-in value: 249 * 5 * 100 = 124,500.
+        self.assertAlmostEqual(ex["call_premium"], 559_250, places=2)
+        self.assertAlmostEqual(ex["put_premium"], 374_590 - 124_500, places=2)
+        self.assertAlmostEqual(ex["total_premium"], 809_340, places=2)
+        self.assertEqual(ex["share_of_premium"], 0.867)                    # 809,340 / 933,840
+        self.assertAlmostEqual(ex["premium_by_side"]["mid"], 93_000 + 29_000 + 10_250 + 27_390, places=2)
+        self.assertAlmostEqual(ex["premium_by_side"]["ask"], 440_500, places=2)
+        self.assertAlmostEqual(ex["premium_by_side"]["bid"], 209_000, places=2)
+        self.assertEqual((ex["bullish_premium"], ex["bearish_premium"], ex["lean"]),
+                         (417_000.0, 232_500.0, "bullish"))
+        self.assertEqual((ex["deep_itm_contracts"], ex["deep_itm_premium"]), (0, 0.0))
+        self.assertEqual(ex["classified_share"], 0.803)                    # 649,500 / 809,340 = 0.80251
+        # The total-premium fields keep their meaning.
+        self.assertAlmostEqual(r["sentiment"]["bullish_premium"], 417_000, places=2)
+        self.assertAlmostEqual(r["premium_by_side"]["mid"], 93_000 + 29_000 + 10_250 + 151_890, places=2)
+
+    def test_deep_itm_block_ranks_by_time_value(self):
+        r = flow.analyze(leaps_chain())
+        u = r["unusual"]
+        self.assertEqual([x["contract"] for x in u], ["LEAP261016C00350000", "LEAP290119C00170000"])
+        deep = u[1]
+        self.assertEqual((deep["intrinsic"], deep["extrinsic"], deep["deep_itm"]), (161.0, 12.0, True))
+        self.assertEqual((deep["premium"], deep["extrinsic_premium"]), (17_300_000.0, 1_200_000.0))
+        self.assertEqual(r["unusual_deep_itm_count"], 1)
+        ex = r["extrinsic"]
+        self.assertEqual((ex["deep_itm_contracts"], ex["deep_itm_premium"]), (1, 17_300_000.0))
+        self.assertEqual(ex["total_premium"], 1_200_000 + 1_500_000 + 630_000)
+        json.dumps(r, allow_nan=False)
+
+    def test_deep_itm_is_left_out_of_the_time_value_lean(self):
+        # The deep block printed at the bid (a call at the bid reads bearish): by total premium
+        # that swamps the lean, while the time-value lean leaves it out.
+        r = flow.analyze(leaps_chain(deep_last=172.0))
+        self.assertEqual(r["sentiment"]["lean"], "bearish")                # 17.3M vs 1.5M
+        ex = r["extrinsic"]
+        self.assertEqual((ex["bullish_premium"], ex["bearish_premium"], ex["lean"]),
+                         (1_500_000.0, 0.0, "bullish"))
+        self.assertEqual(ex["premium_by_side"]["bid"], 1_200_000.0)         # sides still count it
+
+    def test_deep_itm_put_is_left_out_of_the_time_value_lean(self):
+        # Puts carry a negative Cboe delta. A deep ITM put block at the ask (bearish-looking):
+        # spot 331, 500 put at mid 170 (bid 169.5, ask 170.5, last 170.5), delta -0.96, 1,000
+        # contracts: premium 17,000,000, intrinsic 169, extrinsic 1.00 -> 100,000.
+        # The 170 call block prints at the mid (173), so it is in neither lean.
+        raw = leaps_chain(deep_last=173.0)
+        raw["data"]["options"].append(option("LEAP261016P00500000", 169.5, 170.5, 170.5, 1000, 50, -0.96))
+        r = flow.analyze(raw)
+        put = next(x for x in r["unusual"] if x["contract"] == "LEAP261016P00500000")
+        self.assertEqual((put["intrinsic"], put["extrinsic"], put["deep_itm"]), (169.0, 1.0, True))
+        self.assertEqual((put["premium"], put["extrinsic_premium"]), (17_000_000.0, 100_000.0))
+        # By total premium the put block makes the day look bearish: 17.0M vs the 350 call's 1.5M.
+        self.assertEqual((r["sentiment"]["bullish_premium"], r["sentiment"]["bearish_premium"],
+                          r["sentiment"]["lean"]), (1_500_000.0, 17_000_000.0, "bearish"))
+        ex = r["extrinsic"]
+        self.assertEqual((ex["bullish_premium"], ex["bearish_premium"], ex["lean"]),
+                         (1_500_000.0, 0.0, "bullish"))
+        self.assertEqual(ex["premium_by_side"]["ask"], 1_600_000.0)        # 1.5M + the put's 100K
+        self.assertEqual((ex["deep_itm_contracts"], ex["deep_itm_premium"]), (2, 34_300_000.0))
+        self.assertEqual(r["unusual_deep_itm_count"], 2)
+
+    def test_markdown_shows_time_value(self):
+        md = flow.to_markdown(flow.analyze(leaps_chain()))
+        self.assertIn("| ~Premium | ~Extrinsic |", md)
+        self.assertIn("| $17.30M | $1.20M |", md)
+        self.assertIn("-48.6% (deep ITM)", md)
+        self.assertIn("ranked by time value (extrinsic premium)", md)
+        self.assertIn("carry mostly built-in value, often from stock replacement or rolls", md)
+        self.assertIn("desk weighs the time-value part", md)
+        self.assertIn("**Time value:** ~$3.33M of the ~$19.43M premium (17%)", md)
+        self.assertIn("1 deep in-the-money contract traded ~$17.30M of premium.", md)
+        # A chain with no built-in value does not claim there is a rest.
+        plain = flow.to_markdown(flow.analyze(load("flow_stale.json")))
+        self.assertIn("is time value. Time-value lean", plain)
 
 
 class TestFetch(unittest.TestCase):

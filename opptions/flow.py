@@ -22,11 +22,22 @@ Method:
     chain's as_of date; if no contract traded on that date (a weekend or
     pre-market fetch), it falls back to the newest trade date in the chain.
   * unusual: volume >= OPPTIONS_MIN_VOLUME (default 250) AND volume > OI AND
-    premium >= OPPTIONS_MIN_PREMIUM (default 50000). Ranked by premium.
+    premium >= OPPTIONS_MIN_PREMIUM (default 50000). Ranked by extrinsic
+    premium (below), then premium.
   * estimated bullish premium = calls at ask + puts at bid; bearish = puts at
     ask + calls at bid. The lean is "bullish" or "bearish" only when one side
     exceeds the other by 1.5x, otherwise "mixed". The whole day's volume of a
     contract is credited to its last trade's side, so this is weak evidence.
+  * time value: intrinsic = max(0, spot - strike) for calls, max(0, strike -
+    spot) for puts; extrinsic = max(0, price - intrinsic) with the same price
+    premium() uses; extrinsic premium = volume * extrinsic * 100. A contract is
+    deep in the money (deep_itm) when |delta| >= 0.90, or, with no delta, when
+    intrinsic is at least 90% of its price. Deep ITM premium is mostly built-in
+    value (stock replacement, financing, rolls), so the "extrinsic" block gives
+    totals, sides and a lean in extrinsic premium, with deep ITM contracts left
+    out of that lean. With spot unknown, intrinsic is blank and extrinsic is
+    the whole price. "totals", "sentiment" and "premium_by_side" keep counting
+    total premium.
 
 analyze() is pure: no network and no clock. Days to expiry come from the
 chain's own timestamp via cboe.normalize_chain. All IVs in the result are
@@ -50,6 +61,8 @@ SHORT_DTE = 7
 TOP_UNUSUAL = 15
 TOP_STRIKES = 5
 ATM_BAND_PCT = 0.5      # within 0.5% of spot reads as at-the-money
+DEEP_ITM_DELTA = 0.90   # |delta| at or above this reads as deep in the money
+DEEP_ITM_INTRINSIC = 0.90  # with no delta: intrinsic at least this share of the price
 _EPS = 1e-9             # float slack so a last exactly on a band edge counts as inside it
 
 SIDES = ("ask", "bid", "mid", "stale", "unknown")
@@ -100,10 +113,40 @@ def thresholds(min_volume=None, min_premium=None):
     }
 
 
+def contract_price(o):
+    """Per-share price used for premium: mid if mid > 0 else last."""
+    return o["mid"] if o["mid"] > 0 else o["last"]
+
+
 def premium(o):
     """Rough dollars traded: volume * (mid if mid > 0 else last) * 100."""
-    price = o["mid"] if o["mid"] > 0 else o["last"]
-    return o["volume"] * price * MULTIPLIER
+    return o["volume"] * contract_price(o) * MULTIPLIER
+
+
+def intrinsic_value(opt_type, strike, spot):
+    """Built-in value per share: max(0, spot - strike) for calls, max(0, strike - spot)
+    for puts. None when spot is unknown."""
+    if spot <= 0:
+        return None
+    return max(0.0, spot - strike) if opt_type == "C" else max(0.0, strike - spot)
+
+
+def time_value(o, spot):
+    """(intrinsic, extrinsic, extrinsic_premium, deep_itm) for one normalized contract.
+
+    extrinsic = max(0, price - intrinsic) per share, with premium()'s price; extrinsic
+    premium = volume * extrinsic * 100. With spot unknown, intrinsic is None and the
+    whole price counts as extrinsic. deep_itm: |delta| >= 0.90, or, when delta is
+    missing (zero), intrinsic >= 90% of the price.
+    """
+    price = contract_price(o)
+    intrinsic = intrinsic_value(o["type"], o["strike"], spot)
+    extrinsic = max(0.0, price - (intrinsic or 0.0))
+    if o["delta"]:
+        deep = abs(o["delta"]) >= DEEP_ITM_DELTA
+    else:
+        deep = bool(intrinsic) and price > 0 and intrinsic / price >= DEEP_ITM_INTRINSIC
+    return intrinsic, extrinsic, o["volume"] * extrinsic * MULTIPLIER, deep
 
 
 _ISO_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
@@ -247,8 +290,9 @@ def top_oi_strikes(options, opt_type, spot, n=TOP_STRIKES):
     return out
 
 
-def _unusual_row(o, prem, side, spot):
+def _unusual_row(o, prem, side, spot, tv):
     oi = o["open_interest"]
+    intrinsic, extrinsic, ext_prem, deep = tv
     return {
         "contract": o["contract"],
         "type": TYPE_NAME[o["type"]],
@@ -259,6 +303,10 @@ def _unusual_row(o, prem, side, spot):
         "open_interest": int(oi),
         "vol_oi": round(o["volume"] / oi, 2) if oi > 0 else None,
         "premium": round(prem, 2),
+        "intrinsic": None if intrinsic is None else round(intrinsic, 4),
+        "extrinsic": round(extrinsic, 4),
+        "extrinsic_premium": round(ext_prem, 2),
+        "deep_itm": deep,
         "side": side,
         "bid": o["bid"],
         "ask": o["ask"],
@@ -276,8 +324,17 @@ def analyze(raw, min_volume=None, min_premium=None):
     Returns {"symbol", "spot", "spot_source", "as_of", "session_date",
     "session_date_source", "thresholds", "contracts_in_chain",
     "contracts_traded", "totals", "sentiment", "short_dated",
-    "premium_by_side", "unusual_count", "unusual" (top 15 by premium),
-    "positioning": {"calls", "puts"}, "volatility": {"front", "iv30"}, "notes"}.
+    "premium_by_side", "extrinsic", "unusual_count", "unusual_deep_itm_count",
+    "unusual" (top 15 by extrinsic premium), "positioning": {"calls", "puts"},
+    "volatility": {"front", "iv30"}, "notes"}.
+
+    "totals", "sentiment" and "premium_by_side" count total premium, as before.
+    "extrinsic" counts only time value: {"call_premium", "put_premium",
+    "total_premium", "share_of_premium", "deep_itm_contracts" (traded),
+    "deep_itm_premium", "premium_by_side", "bullish_premium", "bearish_premium",
+    "classified_share", "lean", "lean_factor"}; its lean leaves out deep ITM
+    contracts. Each unusual row adds "intrinsic" (per share), "extrinsic" (per
+    share), "extrinsic_premium" and "deep_itm".
     """
     chain = cboe.normalize_chain(raw)
     th = thresholds(min_volume, min_premium)
@@ -289,29 +346,43 @@ def analyze(raw, min_volume=None, min_premium=None):
     prem_by_type = {"C": 0.0, "P": 0.0}
     oi = {"C": 0.0, "P": 0.0}
     by_side = dict.fromkeys(SIDES, 0.0)
+    ext_by_type = {"C": 0.0, "P": 0.0}
+    ext_by_side = dict.fromkeys(SIDES, 0.0)
     bullish = bearish = short_prem = 0.0
-    traded = stale_traded = 0
+    ext_bullish = ext_bearish = deep_prem = 0.0
+    traded = stale_traded = deep_traded = 0
     unusual = []
     for o in options:
         t = o["type"]
         prem = premium(o)
         side = estimate_side(o, session)
+        tv = time_value(o, spot)
+        ext_prem, deep = tv[2], tv[3]
         vol[t] += o["volume"]
         prem_by_type[t] += prem
+        ext_by_type[t] += ext_prem
         oi[t] += o["open_interest"]
         if o["volume"] > 0:
             traded += 1
             by_side[side] += prem
+            ext_by_side[side] += ext_prem
             stale_traded += side == "stale"
+            if deep:
+                deep_traded += 1
+                deep_prem += prem
         if (t, side) in (("C", "ask"), ("P", "bid")):
             bullish += prem
+            ext_bullish += 0.0 if deep else ext_prem
         elif (t, side) in (("P", "ask"), ("C", "bid")):
             bearish += prem
+            ext_bearish += 0.0 if deep else ext_prem
         if o["dte"] <= SHORT_DTE:
             short_prem += prem
         if is_unusual(o["volume"], o["open_interest"], prem, th):
-            unusual.append(_unusual_row(o, prem, side, spot))
-    unusual.sort(key=lambda r: (-r["premium"], r["contract"]))
+            unusual.append(_unusual_row(o, prem, side, spot, tv))
+    # Time value first: a deep ITM block is mostly built-in value and says little.
+    unusual.sort(key=lambda r: (-r["extrinsic_premium"], -r["premium"], r["contract"]))
+    total_ext = ext_by_type["C"] + ext_by_type["P"]
 
     total_prem = prem_by_type["C"] + prem_by_type["P"]
     total_vol = vol["C"] + vol["P"]
@@ -334,10 +405,11 @@ def analyze(raw, min_volume=None, min_premium=None):
                      "over from an earlier session, so those numbers are less reliable and are kept "
                      "out of the lean.")
     if options and spot <= 0:
-        notes.append("Spot price is unknown, so moneyness and expected move are blank.")
+        notes.append("Spot price is unknown, so moneyness, intrinsic value and expected move are "
+                     "blank, and all premium counts as time value.")
     if len(unusual) > TOP_UNUSUAL:
         notes.append(f"{len(unusual)} contracts met the unusual rule; showing the top "
-                     f"{TOP_UNUSUAL} by premium.")
+                     f"{TOP_UNUSUAL} by time value (extrinsic premium).")
 
     return {
         "symbol": chain["symbol"],
@@ -375,7 +447,22 @@ def analyze(raw, min_volume=None, min_premium=None):
             "share": _ratio(short_prem, total_prem),
         },
         "premium_by_side": {k: round(v, 2) for k, v in by_side.items()},
+        "extrinsic": {
+            "call_premium": round(ext_by_type["C"], 2),
+            "put_premium": round(ext_by_type["P"], 2),
+            "total_premium": round(total_ext, 2),
+            "share_of_premium": _ratio(total_ext, total_prem),
+            "deep_itm_contracts": deep_traded,
+            "deep_itm_premium": round(deep_prem, 2),
+            "premium_by_side": {k: round(v, 2) for k, v in ext_by_side.items()},
+            "bullish_premium": round(ext_bullish, 2),
+            "bearish_premium": round(ext_bearish, 2),
+            "classified_share": _ratio(ext_bullish + ext_bearish, total_ext),
+            "lean": lean_label(ext_bullish, ext_bearish),
+            "lean_factor": LEAN_FACTOR,
+        },
         "unusual_count": len(unusual),
+        "unusual_deep_itm_count": sum(1 for r in unusual if r["deep_itm"]),
         "unusual": unusual[:TOP_UNUSUAL],
         "positioning": {
             "calls": top_oi_strikes(options, "C", spot),
@@ -436,12 +523,12 @@ def _fmt_pct(pct):
     return "at spot" if abs(pct) < 0.05 else f"{pct:+.1f}%"
 
 
-def _fmt_moneyness(pct, otm):
+def _fmt_moneyness(pct, otm, deep=False):
     if pct is None:
-        return "n/a"
+        return "deep ITM" if deep else "n/a"
     if abs(pct) < ATM_BAND_PCT:
         return f"{_fmt_pct(pct)} (ATM)"
-    return f"{_fmt_pct(pct)} ({'OTM' if otm else 'ITM'})"
+    return f"{_fmt_pct(pct)} ({'deep ITM' if deep else 'OTM' if otm else 'ITM'})"
 
 
 def _pc_volume_meaning(r):
@@ -516,6 +603,30 @@ def _iv_lines(vol):
     return lines
 
 
+DEEP_ITM_LINE = ("Deep in-the-money options (|delta| 0.90 or more, marked \"deep ITM\") carry mostly "
+                 "built-in value, often from stock replacement or rolls rather than a fresh bet, so the "
+                 "desk weighs the time-value part (~Extrinsic) more than the total premium.")
+
+
+def _time_value_lines(ex, total_premium):
+    """Summary bullet for the time-value (extrinsic) totals and lean; [] for older results."""
+    if not ex:
+        return []
+    lean = ex.get("lean", "mixed")
+    deep_n = ex.get("deep_itm_contracts") or 0
+    deep = (f" {deep_n} deep in-the-money contract{'s' if deep_n != 1 else ''} traded "
+            f"~{fmt_money(ex.get('deep_itm_premium'))} of premium." if deep_n else "")
+    built_in = (total_premium or 0) - (ex.get("total_premium") or 0)
+    rest = "; the rest is built-in value of in-the-money options" if built_in >= 0.5 else ""
+    return [f"- **Time value:** ~{fmt_money(ex.get('total_premium'))} of the ~{fmt_money(total_premium)} "
+            f"premium ({_fmt_share(ex.get('share_of_premium'))}) is time value{rest}.{deep} "
+            f"Time-value lean: {lean} "
+            f"(~{fmt_money(ex.get('bullish_premium'))} bullish-looking vs "
+            f"~{fmt_money(ex.get('bearish_premium'))} bearish-looking, deep in-the-money contracts left out).",
+            "  Time value is the part of the price that can be lost by expiry, so it tends to show the size "
+            "of a bet better than total premium, which deep in-the-money options inflate."]
+
+
 def _caveat(result):
     th = result.get("thresholds") or {}
     return ("_Caveat: free Cboe data, about 15 minutes delayed. This is unusual activity from each "
@@ -573,6 +684,7 @@ def to_markdown(result):
         if (s.get("classified_share") or 0) < 0.5:
             lines.append("  Less than half the premium could be called bullish or bearish, so treat "
                          "this lean as weak.")
+        lines += _time_value_lines(result.get("extrinsic"), t.get("total_premium"))
         lines.append(f"- **Short-dated:** {_fmt_share(sd.get('share'))} of premium is in options expiring "
                      f"within {sd.get('max_dte', SHORT_DTE)} days.")
         lines.append(f"  {_short_meaning(sd.get('share'))}")
@@ -584,18 +696,22 @@ def to_markdown(result):
     if unusual:
         count = result.get("unusual_count", len(unusual))
         lines.append(f"{count} contract{'s' if count != 1 else ''} met the unusual rule"
-                     + (f"; top {len(unusual)} by premium." if count > len(unusual) else ", ranked by premium."))
+                     + (f"; top {len(unusual)} by time value (extrinsic premium)." if count > len(unusual)
+                        else ", ranked by time value (extrinsic premium)."))
         lines += ["",
-                  "| Contract | Expiry (DTE) | Strike | Type | Volume | OI | Vol/OI | ~Premium | Side | IV | Delta | vs spot |",
-                  "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+                  "| Contract | Expiry (DTE) | Strike | Type | Volume | OI | Vol/OI | ~Premium | ~Extrinsic | "
+                  "Side | IV | Delta | vs spot |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for r in unusual:
             vol_oi = f"{r['vol_oi']:.1f}x" if r["vol_oi"] is not None else "new (OI 0)"
             dte = "expired" if r["dte"] is not None and r["dte"] < 0 else r["dte"]
             lines.append(f"| {r['contract']} | {r['expiry']} ({dte}) | {_fmt_price(r['strike'])} | "
                          f"{r['type']} | {_fmt_int(r['volume'])} | {_fmt_int(r['open_interest'])} | {vol_oi} | "
-                         f"{fmt_money(r['premium'])} | {SIDE_LABEL.get(r['side'], r['side'])} | "
-                         f"{_fmt_iv(r['iv'])} | {r['delta']:+.2f} | {_fmt_moneyness(r['moneyness_pct'], r['otm'])} |")
+                         f"{fmt_money(r['premium'])} | {fmt_money(r.get('extrinsic_premium'))} | "
+                         f"{SIDE_LABEL.get(r['side'], r['side'])} | {_fmt_iv(r['iv'])} | {r['delta']:+.2f} | "
+                         f"{_fmt_moneyness(r['moneyness_pct'], r['otm'], r.get('deep_itm'))} |")
         lines += ["",
+                  DEEP_ITM_LINE,
                   "Side: \"ask\" means the last trade printed near the ask (likely bought), \"bid\" near the "
                   "bid (likely sold), \"mid\" in between, \"stale\" means the last trade is not from this "
                   "session, \"unknown\" means there was no usable quote.",

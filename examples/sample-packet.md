@@ -74,6 +74,8 @@ _Built from each contract's total volume for the day, not trade-by-trade prints,
   More open calls than puts. Open interest is positioning built over days or weeks (updated overnight), so this ratio moves slowly.
 - **Estimated lean: bullish.** ~$417K bullish-looking (calls at ask, puts at bid) vs ~$232K bearish-looking (puts at ask, calls at bid); 70% of premium could be called bullish or bearish.
   More premium looks bullish (calls paid at the ask, puts sold at the bid). That tends to lean toward upside bets, but a hedge or one leg of a spread can look the same.
+- **Time value:** ~$809K of the ~$934K premium (87%) is time value; the rest is built-in value of in-the-money options. Time-value lean: bullish (~$417K bullish-looking vs ~$232K bearish-looking, deep in-the-money contracts left out).
+  Time value is the part of the price that can be lost by expiry, so it tends to show the size of a bet better than total premium, which deep in-the-money options inflate.
 - **Short-dated:** 49% of premium is in options expiring within 7 days.
   The money is split roughly evenly between options expiring within a week and longer-dated ones, so neither quick bets nor longer positions clearly dominate.
 - **Implied volatility:** front expiry 2026-10-02 (2 DTE) ATM IV 51% at the 100 strike; IV30 48%.
@@ -82,15 +84,16 @@ _Built from each contract's total volume for the day, not trade-by-trade prints,
 
 ### Unusual contracts
 
-4 contracts met the unusual rule, ranked by premium.
+4 contracts met the unusual rule, ranked by time value (extrinsic premium).
 
-| Contract | Expiry (DTE) | Strike | Type | Volume | OI | Vol/OI | ~Premium | Side | IV | Delta | vs spot |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| DEMO261002C00105000 | 2026-10-02 (2) | 105 | call | 2,000 | 500 | 4.0x | $230K | ask (likely bought) | 55% | +0.25 | +5.0% (OTM) |
-| DEMO261016C00100000 | 2026-10-16 (16) | 100 | call | 400 | 300 | 1.3x | $124K | bid (likely sold) | 47% | +0.52 | at spot (ATM) |
-| DEMO261016P00100000 | 2026-10-16 (16) | 100 | put | 300 | 250 | 1.2x | $90K | ask (likely bought) | 49% | -0.48 | at spot (ATM) |
-| DEMO261016C00110000 | 2026-10-16 (16) | 110 | call | 800 | 0 | new (OI 0) | $84K | ask (likely bought) | 46% | +0.25 | +10.0% (OTM) |
+| Contract | Expiry (DTE) | Strike | Type | Volume | OI | Vol/OI | ~Premium | ~Extrinsic | Side | IV | Delta | vs spot |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| DEMO261002C00105000 | 2026-10-02 (2) | 105 | call | 2,000 | 500 | 4.0x | $230K | $230K | ask (likely bought) | 55% | +0.25 | +5.0% (OTM) |
+| DEMO261016C00100000 | 2026-10-16 (16) | 100 | call | 400 | 300 | 1.3x | $124K | $124K | bid (likely sold) | 47% | +0.52 | at spot (ATM) |
+| DEMO261016P00100000 | 2026-10-16 (16) | 100 | put | 300 | 250 | 1.2x | $90K | $90K | ask (likely bought) | 49% | -0.48 | at spot (ATM) |
+| DEMO261016C00110000 | 2026-10-16 (16) | 110 | call | 800 | 0 | new (OI 0) | $84K | $84K | ask (likely bought) | 46% | +0.25 | +10.0% (OTM) |
 
+Deep in-the-money options (|delta| 0.90 or more, marked "deep ITM") carry mostly built-in value, often from stock replacement or rolls rather than a fresh bet, so the desk weighs the time-value part (~Extrinsic) more than the total premium.
 Side: "ask" means the last trade printed near the ask (likely bought), "bid" near the bid (likely sold), "mid" in between, "stale" means the last trade is not from this session, "unknown" means there was no usable quote.
 Volume above open interest tends to mean many of today's trades opened new positions, which is why traders watch it. Check tomorrow's open interest: if it rises by about the volume, positions were likely opened. Any one contract can also be a hedge or one leg of a spread, so treat these as clues, not conclusions.
 
