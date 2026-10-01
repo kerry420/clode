@@ -46,6 +46,9 @@ NOTABLE_FORMS = {
     "424B3": "Prospectus (possible offering)",
     "SC 13D": "Activist or >5% holder stake",
     "SC 13G": ">5% passive holder stake",
+    # EDGAR's names for the same schedules since the XML switch in December 2024.
+    "SCHEDULE 13D": "Activist or >5% holder stake",
+    "SCHEDULE 13G": ">5% passive holder stake",
     "10-Q": "Quarterly report",
     "10-K": "Annual report",
     "8-K": "Current report",
@@ -90,6 +93,7 @@ def recent_filings(submissions, limit=40):
         out.append({
             "form": form,
             "filed": col("filingDate"),
+            "accepted": col("acceptanceDateTime"),  # EDGAR acceptance time string, "" if absent
             "items": items,
             "item_meanings": [EIGHT_K_ITEMS.get(it, it) for it in items],
             "description": NOTABLE_FORMS.get(form, ""),

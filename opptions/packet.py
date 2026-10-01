@@ -11,21 +11,29 @@ from datetime import datetime, timezone
 
 from . import TRACKERS
 from .http import FetchError
+from .news import to_eastern
 
 HEADER = """# Research packet: {symbol}
 
-Generated {generated} UTC by the opptions trackers. Option data is Cboe's
-15-minute-delayed chain; open interest updates once per day. Treat every
-section as raw input for analysis, not a recommendation.
+Generated {generated} UTC (US Eastern date {et_date}) by the opptions
+trackers. Option data is Cboe's 15-minute-delayed chain; open interest updates
+once per day. Treat every section as raw input for analysis, not a
+recommendation.
 
 """
+
+
+def eastern_date(now):
+    """US Eastern trading date (YYYY-MM-DD) for an aware datetime; the agents name files by it."""
+    return to_eastern(now).strftime("%Y-%m-%d")
 
 
 def build(symbol):
     """Return (markdown, results) for one symbol. A failing tracker becomes a note, not a crash."""
     symbol = symbol.upper()
-    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-    parts = [HEADER.format(symbol=symbol, generated=generated)]
+    now = datetime.now(timezone.utc)
+    parts = [HEADER.format(symbol=symbol, generated=now.strftime("%Y-%m-%d %H:%M"),
+                           et_date=eastern_date(now))]
     results = {}
     for name in TRACKERS:
         try:
@@ -50,9 +58,9 @@ def main(symbols, out_dir=None, as_json=False):
             status = 1
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+            stamp = eastern_date(datetime.now(timezone.utc))
             path = os.path.join(out_dir, f"{symbol.upper()}-{stamp}.md")
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 f.write(md)
             print(path)
         elif as_json:

@@ -1,0 +1,23 @@
+{
+ "data": {
+  "reportText": "Acme Widgets, Inc. Common Stock is expected* to report earnings on  10/22/2026 after market close. The report will be for the fiscal Quarter ending Sep 2026. According to Zacks Investment Research, based on 8 analysts' forecasts, the consensus EPS forecast for the quarter is $1.42. The reported EPS for the same quarter last year was $1.10.",
+  "heading": "ACME Earnings Date",
+  "announcement": "Earnings announcement* for ACME: Oct 22, 2026",
+  "eQRResposeModel": {
+   "text": [
+    "ACME has a \"high\" Earnings Quality Ranking (EQR) for the 1st week."
+   ],
+   "boldText": null,
+   "dataLinkUrl": {
+    "label": "Find out more about EQR data",
+    "value": "https://data.nasdaq.com/databases/EQR"
+   }
+  }
+ },
+ "message": null,
+ "status": {
+  "rCode": 200,
+  "bCodeMessage": null,
+  "developerMessage": null
+ }
+}

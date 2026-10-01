@@ -14,6 +14,11 @@ Shape (abridged):
                            "delta": ..., "gamma": ..., "theo": ...,
                            "last_trade_price": ..., "last_trade_time": "...",
                            "prev_day_close": ...}, ...]}}
+
+Units: each contract's "iv" is a decimal (0.21 = 21%), but the underlying's
+"iv30" is in percent points (48.5 = 48.5%); normalize_chain passes it through
+as is. The timezone of "timestamp" is not documented (US Eastern or UTC), so
+days to expiry can be one day short for runs late in the US evening.
 """
 
 import re
@@ -86,8 +91,12 @@ def _infer_spot(data, options):
     return 0.0, "unknown"
 
 
-def normalize_chain(raw):
+def normalize_chain(raw, today=None):
     """Turn Cboe's raw JSON into a flat, typed structure.
+
+    Days to expiry count from the chain's timestamp. When the chain has none,
+    they count from `today` (a date) if given, else from the clock, so pure
+    callers should pass `today`.
 
     Returns {"symbol", "spot", "spot_source", "as_of" (ISO str or None),
              "iv30", "options": [{"contract", "expiry" (ISO date), "dte", "type",
@@ -97,7 +106,10 @@ def normalize_chain(raw):
     """
     data = raw.get("data") or {}
     as_of = _as_of(raw)
-    today = as_of.date() if as_of else date.today()
+    if as_of:
+        today = as_of.date()
+    elif today is None:
+        today = date.today()
     options = []
     for o in data.get("options") or []:
         try:

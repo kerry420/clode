@@ -1,0 +1,11 @@
+{
+ "timestamp": "2026-10-01 15:45:00",
+ "data": {
+  "symbol": "XYZ",
+  "current_price": 100.0,
+  "iv30": null,
+  "close": 100.0,
+  "prev_day_close": 99.15,
+  "options": []
+ }
+}

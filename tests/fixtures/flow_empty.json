@@ -1,0 +1,9 @@
+{
+ "timestamp": "2026-09-30 16:15:00",
+ "data": {
+  "symbol": "ACME",
+  "current_price": 100.0,
+  "iv30": null,
+  "options": []
+ }
+}

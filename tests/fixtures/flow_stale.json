@@ -1,0 +1,61 @@
+{
+ "timestamp": "2026-09-30 16:15:00",
+ "data": {
+  "symbol": "ACME",
+  "current_price": 100.0,
+  "close": 100.0,
+  "iv30": 48.5,
+  "options": [
+   {
+    "option": "ACME261016C00100000",
+    "bid": 3.0,
+    "bid_size": 10.0,
+    "ask": 3.2,
+    "ask_size": 12.0,
+    "iv": 0.47,
+    "open_interest": 100.0,
+    "volume": 500.0,
+    "delta": 0.52,
+    "gamma": 0.02,
+    "vega": 0.05,
+    "theta": -0.04,
+    "rho": 0.01,
+    "theo": 3.1,
+    "change": 0.0,
+    "open": 3.2,
+    "high": 3.2,
+    "low": 3.2,
+    "tick": "up",
+    "last_trade_price": 3.2,
+    "last_trade_time": "2026-09-30T15:58:00",
+    "percent_change": 0.0,
+    "prev_day_close": 3.2
+   },
+   {
+    "option": "ACME261016P00095000",
+    "bid": 1.4,
+    "bid_size": 10.0,
+    "ask": 1.5,
+    "ask_size": 12.0,
+    "iv": 0.52,
+    "open_interest": 50.0,
+    "volume": 400.0,
+    "delta": -0.3,
+    "gamma": 0.02,
+    "vega": 0.05,
+    "theta": -0.04,
+    "rho": 0.01,
+    "theo": 1.45,
+    "change": 0.0,
+    "open": 1.5,
+    "high": 1.5,
+    "low": 1.5,
+    "tick": "up",
+    "last_trade_price": 1.5,
+    "last_trade_time": "2026-09-29T15:45:00",
+    "percent_change": 0.0,
+    "prev_day_close": 1.5
+   }
+  ]
+ }
+}

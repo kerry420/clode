@@ -4,6 +4,7 @@ Only the standard library is used so the toolkit runs anywhere Python 3.10+
 does, with no install step.
 """
 
+import http.client
 import json
 import os
 import urllib.error
@@ -14,7 +15,10 @@ DEFAULT_UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
-TIMEOUT = float(os.environ.get("OPPTIONS_TIMEOUT", "20"))
+try:
+    TIMEOUT = float(os.environ.get("OPPTIONS_TIMEOUT", "20"))
+except ValueError:  # a bad value should not stop the CLI from starting
+    TIMEOUT = 20.0
 
 
 class FetchError(RuntimeError):
@@ -32,7 +36,7 @@ def fetch_text(url, headers=None):
             return resp.read().decode(charset, errors="replace")
     except urllib.error.HTTPError as e:
         raise FetchError(f"{host} answered HTTP {e.code} for {url}") from e
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as e:
         reason = getattr(e, "reason", e)
         raise FetchError(
             f"could not reach {host} ({reason}). If this runs in a sandbox, "
