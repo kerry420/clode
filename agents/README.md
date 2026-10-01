@@ -1,52 +1,59 @@
-# opptions agent team
+# opptions agent team: the desk
 
-A small team of Claude agents in one Claude Project, each in its own thread.
-They gather free, delayed market information on Kerry's watchlist, explain it
-in plain English, and help Kerry bring a well-prepared question to the
-**Options Study** chat. The agents research and explain; Kerry decides.
-Nothing here places trades or tells anyone to buy or sell.
+Five Claude agents in one Claude Project, each in its own thread, working like
+one desk on the trading floor of a top firm. Each specialist brings its own
+expertise, they check each other's ideas, and every morning the desk lead
+hands Kerry, the portfolio manager, one **Desk Report**: the stocks most worth
+looking into for options and swing trades, with the desk's combined reasoning.
+Kerry decides, then takes the chosen ideas to the **Options Study** chat.
+Nothing here places trades. How the desk works together is in
+[desk.md](desk.md); each seat's own craft is in its brief.
 
-| Thread | Brief | Job | Writes to |
-|---|---|---|---|
-| GEX tracker | [gex-tracker.md](gex-tracker.md) | Dealer gamma levels: gamma flip, call wall, put wall | `gex/` |
-| Flow tracker | [flow-tracker.md](flow-tracker.md) | Unusual volume vs open interest, put/call, big premium | `flow/` |
-| News tracker | [news-tracker.md](news-tracker.md) | Headlines, SEC filings, insider trades, analyst actions | `news/` |
-| Earnings tracker | [earnings-tracker.md](earnings-tracker.md) | Dates, implied move, last report and call transcript | `earnings/` |
-| Explainer | [explainer.md](explainer.md) | Teaches what the news and earnings could mean | `explainer/` |
-| Options Study (existing claude.ai chat, outside the project) | [options-study-handoff.md](options-study-handoff.md) | Analyzes the trade Kerry picks, with screenshots | - |
+| Seat | Thread | Brief | Expertise | Writes to |
+|---|---|---|---|---|
+| Desk lead | Explainer | [explainer.md](explainer.md) | Runs the morning meeting, writes the Desk Report, explains in plain English | `desk/<DATE>/desk-report.md`, `explainer/` |
+| News analyst | News tracker | [news-tracker.md](news-tracker.md) | Catalysts, filings, analyst actions, macro | `news/`, `desk/<DATE>/news.md` |
+| Earnings analyst | Earnings tracker | [earnings-tracker.md](earnings-tracker.md) | Report dates, implied vs. actual moves, guidance, call tone | `earnings/`, `desk/<DATE>/earnings.md` |
+| Flow trader | Options flow tracker | [flow-tracker.md](flow-tracker.md) | Unusual volume, premium, put/call, new open interest | `flow/`, `desk/<DATE>/flow.md` |
+| Derivatives strategist | GEX tracker | [gex-tracker.md](gex-tracker.md) | Dealer gamma: flip, call and put walls, pinning | `gex/`, `desk/<DATE>/gex.md` |
+| Portfolio manager | Kerry | [options-study-handoff.md](options-study-handoff.md) | Reads the Desk Report, picks, takes ideas to Options Study | - |
 
-## How information flows
+## How the desk works together
 
-GEX and Flow run on their own schedules for every watchlist ticker. They do
-not wait for Kerry's picks; their files are ready when Kerry needs them.
+Every seat covers Kerry's watchlist and also scouts beyond it, nominating up
+to 3 names a day from its own specialty. Each seat that runs later gives its
+view (Supports, Neutral or Against) on every name already nominated, so ideas
+get checked from every angle. The desk lead fills any missing view, scores
+conviction by how many seats agree, and writes the report.
 
 ```
-                  watchlist.md (every ticker Kerry follows)
-                                  |
-     +---------------+------------+------------+-----------------+
-     v               v                         v                 v
- News tracker   Earnings tracker          GEX tracker       Flow tracker
- (7:18 ET)      (7:41 ET)                 (after close)     (8:40, 12:17 ET)
-     |               |                         |                 |
-     +-------+-------+                         |                 |
-             v                                 |                 |
-         Explainer (8:50 ET)                   |                 |
-   plain-English read of the news              |                 |
-   and earnings for each ticker                |                 |
-             |                                 |                 |
-             v                                 |                 |
-   Kerry reads it and picks a ticker           |                 |
-   and a trade idea                            |                 |
-             |                                 |                 |
-             v                                 v                 v
-   Packet: send "prep SYMBOL idea" to the Explainer. It bundles that
-   ticker's GEX, Flow, News and Earnings sections into one file and drafts
-   the message for Options Study. Kerry adds chart and option-chain
-   screenshots.
-             |
-             v
-   Options Study chat (claude.ai) analyzes the trade
+  4:40 PM day before   Derivatives strategist: GEX scan, first nominations
+          |
+  7:18 AM              News analyst: catalysts, nominations, views on the board
+          |
+  7:41 AM              Earnings analyst: calendar, nominations, views on the board
+          |
+  8:05 AM              Flow trader: flow scan, nominations, views on the board
+          |
+  8:30 AM              Derivatives strategist: fresh-OI levels for every board name
+          |
+          v
+  8:50 AM              Desk lead: morning meeting, fills gaps, ranks by conviction
+          |
+          v
+  about 9:15 AM        Kerry reads the Desk Report and picks
+          |
+          v
+  Send "prep SYMBOL idea" to the Explainer: it bundles that ticker's GEX, flow,
+  news and earnings into one packet and drafts the message for Options Study.
+  Add chart and option-chain screenshots.
+          |
+          v
+  Options Study chat (claude.ai) analyzes the trade
 ```
+
+The seats share work through files on the board,
+`/mnt/project-files/opptions/desk/<DATE>/`, not through chat.
 
 ## Folder layout (shared project folder, never the repo)
 
@@ -58,6 +65,10 @@ not wait for Kerry's picks; their files are ready when Kerry needs them.
   news/<SYMBOL>-<YYYY-MM-DD>.md         News tracker, ends with "Hand-off to the Explainer"
   earnings/<SYMBOL>-<YYYY-MM-DD>.md     Earnings tracker, ends with "Hand-off to the Explainer"
   explainer/<SYMBOL>-<YYYY-MM-DD>.md    Explainer
+  desk/<YYYY-MM-DD>/                    the board for one trading day:
+    gex.md news.md earnings.md flow.md    each seat's desk note (nominations, views)
+    desk-report.md                        the Desk Report for Kerry
+  universe.md                           optional: tickers for `scan` (default list built in)
   packets/<SYMBOL>-<YYYY-MM-DD>.md      opptions packet output (the command prints the path)
   notes/                                optional: Kerry's own notes from Options Study
 ```
@@ -68,14 +79,16 @@ project folder. Agents never write them into the repo.
 
 ## Daily rhythm (US Eastern time)
 
-| When | Thread | What |
+| When | Seat | What |
 |---|---|---|
-| 7:30-8:30 pre-market | News, Earnings | Overnight headlines and filings, upcoming dates, any report since the last run |
-| 8:00-9:00 pre-market | Flow | Recap of yesterday's full session, and whether yesterday's unusual contracts became new open interest (OI updates overnight) |
-| 8:30-9:15 | Explainer | Reads today's News and Earnings hand-offs, writes the explanations |
-| about 9:15 | Kerry | Reads the Explainer files, decides what to study |
-| about 12:30 (optional) | Flow | Midday refresh: volume has built up (data is 15 minutes delayed) |
-| after 4:15 post-close | GEX | Maps tomorrow's levels from today's close. OI only updates overnight, so levels barely change intraday except through price; an optional pre-market recheck picks up the fresh OI |
+| 4:40 PM, day before | Derivatives strategist | Next day's levels from the close, `scan gex`, first nominations |
+| 7:18 | News analyst | Overnight news and filings, scouting, views on the board |
+| 7:41 | Earnings analyst | Dates and implied moves, scouting, views on the board |
+| 8:05 | Flow trader | Yesterday's session and new OI, `scan flow`, views on the board |
+| 8:30 | Derivatives strategist | Desk check: levels for every board name with fresh OI |
+| 8:50 | Desk lead | Morning meeting, Desk Report ready by about 9:10 |
+| about 9:15 | Kerry | Reads the Desk Report, picks, sends `prep` |
+| 12:17 | Flow trader | Midday refresh, including the Desk Report names |
 | evening (when needed) | Earnings, Explainer | A watchlist name reported after the close |
 
 Kerry then follows [options-study-handoff.md](options-study-handoff.md).
@@ -92,7 +105,8 @@ Kerry then follows [options-study-handoff.md](options-study-handoff.md).
    - `run NVDA AMD`: only these tickers
    - `refresh`: Flow tracker's midday update
    - `flags`: just today's flags, no new fetch
-   - Explainer only: `prep NVDA <trade idea>` drafts the Options Study message
+   - Explainer only: `why NVDA` explains a Desk Report name in more depth, and
+     `prep NVDA <trade idea>` drafts the Options Study message
 4. Edit the watchlist file in the project folder (or ask any thread to).
    Every tracker re-reads it on each run.
 

@@ -9,9 +9,10 @@ message when Kerry sends `prep <SYMBOL> <trade idea>` in its thread.
 
 ## Steps
 
-1. Read today's Explainer file: `/mnt/project-files/opptions/explainer/<SYMBOL>-<DATE>.md`.
-   Decide which ticker and which trade idea you want analyzed (strike, expiry,
-   call or put, or a stock swing).
+1. Read today's Desk Report: `/mnt/project-files/opptions/desk/<DATE>/desk-report.md`
+   (and the Explainer file for a watchlist name, if there is one). Decide which
+   ticker and which trade idea you want analyzed (strike, expiry, call or put,
+   or a stock swing).
 2. Build the packet (all four tracker sections in one file). Either send
    `prep <SYMBOL> <idea>` to the Explainer, or run from the clode repo root:
    ```
