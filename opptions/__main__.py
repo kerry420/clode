@@ -5,6 +5,7 @@
     python -m opptions news TSLA
     python -m opptions earnings AAPL
     python -m opptions packet NVDA TSLA --out packets/
+    python -m opptions scan flow|gex [SYMBOLS...] [--universe FILE] [--top N] [--json]
 """
 
 import argparse
@@ -23,6 +24,10 @@ def run_tracker(name, symbol):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["scan"]:  # desk scan has its own arguments; see opptions/scan.py
+        from . import scan
+        return scan.main(argv[1:])
     p = argparse.ArgumentParser(prog="opptions", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("command", choices=TRACKERS + ("packet",))

@@ -43,6 +43,8 @@ python3 -m opptions flow NVDA --json         # unusual volume, as JSON
 python3 -m opptions news TSLA                # headlines and SEC filings, last 7 days
 python3 -m opptions earnings AAPL            # next report, implied move, beat history
 python3 -m opptions packet NVDA AMD --out packets/   # one packet per symbol: packets/NVDA-YYYY-MM-DD.md
+python3 -m opptions scan flow --top 10       # desk scan: rank ~80 liquid names by unusual activity
+python3 -m opptions scan gex --universe watchlist.md --json   # rank by GEX setups (flip, walls, gamma regime)
 ```
 
 - Index symbols such as `SPX`, `NDX`, `RUT` and `VIX` are mapped to Cboe's
@@ -106,6 +108,7 @@ falls back to the default.
 | `OPPTIONS_MIN_VOLUME` | `flow.py` | `250` | Minimum contracts traded for a contract to count as unusual. |
 | `OPPTIONS_MIN_PREMIUM` | `flow.py` | `50000` | Minimum premium in dollars for a contract to count as unusual. |
 | `OPPTIONS_NEWS_DAYS` | `news.py` | `7` | How many days back the headline and filing window reaches. |
+| `OPPTIONS_UNIVERSE` | `universe.py` (scan) | built-in list of ~80 liquid names | File of tickers for `scan` when no symbols or `--universe` are given (one per line; the watchlist.md format works). Ignored unless it names an existing file. |
 
 ## Honest limits
 
@@ -166,6 +169,7 @@ opptions/
   sec.py        EDGAR ticker -> CIK, recent filings, 8-K item meanings
   gex.py flow.py news.py earnings.py   the four trackers
   packet.py     one Markdown packet per symbol from all trackers
+  scan.py universe.py   desk scan: rank a universe by flow or GEX setups
 agents/         briefs for the Claude agent team
 examples/       build_sample.py and the synthetic sample-packet.md
 tests/          unittest suites and fixtures
