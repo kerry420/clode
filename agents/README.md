@@ -27,13 +27,14 @@ get checked from every angle. The desk lead fills any missing view, scores
 conviction by how many seats agree, and writes the report.
 
 ```
+  4:20 PM day before   Flow trader: flow scan while OI is pre-session, first nominations
   4:40 PM day before   Derivatives strategist: GEX scan, first nominations
           |
   6:57 AM              News analyst: catalysts, nominations, views on the board
           |
   7:33 AM              Earnings analyst: calendar, nominations, views on the board
           |
-  8:05 AM              Flow trader: flow scan, nominations, views on the board
+  8:05 AM              Flow trader: confirms which flagged trades became new positions, views
           |
   8:27 AM              Derivatives strategist: fresh-OI levels for every board name
           |
@@ -76,7 +77,7 @@ The seats share work through files on the board,
 ```
 
 Dates are the US Eastern trading date: `TZ=America/New_York date +%F`.
-One exception: the 4:40 PM GEX run writes its desk note to the next trading
+One exception: the 4:20 PM Flow and 4:40 PM GEX runs write their desk notes to the next trading
 day's board folder (see desk.md, which also handles market holidays).
 This repo is public, so the watchlist, positions and picks live only in the
 project folder. Agents never write them into the repo.
@@ -85,10 +86,11 @@ project folder. Agents never write them into the repo.
 
 | When | Seat | What |
 |---|---|---|
+| 4:20 PM, day before | Flow trader | `scan flow` while open interest is still pre-session, first nominations |
 | 4:40 PM, day before | Derivatives strategist | Next day's levels from the close, `scan gex`, first nominations |
 | 6:57 | News analyst | Overnight news and filings, scouting, views on the board |
 | 7:33 | Earnings analyst | Dates and implied moves, scouting, views on the board |
-| 8:05 | Flow trader | Yesterday's session and new OI, `scan flow`, views on the board |
+| 8:05 | Flow trader | Yesterday's session, which flagged contracts became new OI, views on the board |
 | 8:27 | Derivatives strategist | Desk check: levels for every board name with fresh OI |
 | 8:50 | Desk lead | Morning meeting, Desk Report ready by about 9:10 |
 | about 9:15 | Kerry | Reads the Desk Report, picks, sends `prep` |

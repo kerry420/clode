@@ -25,10 +25,11 @@ chosen ideas to the Options Study chat.
 
 | Starts | Seat | Desk job | Board file done by |
 |---|---|---|---|
+| 4:20 PM (day before) | Flow trader | `scan flow` while open interest is still pre-session, up to 3 provisional nominations for the next trading day's board | that evening |
 | 4:40 PM (day before) | Derivatives strategist | Post-close map, `scan gex`, up to 3 provisional nominations for the next trading day's board | that evening |
 | 6:57 | News analyst | Watchlist news, scouting: up to 3 nominations, views on the board, market backdrop | 7:30 |
 | 7:33 | Earnings analyst | Watchlist earnings, scouting: up to 3 nominations, views on the board | 8:00 |
-| 8:05 | Flow trader | Session recap, `scan flow`: up to 3 nominations, views on the board | 8:25 |
+| 8:05 | Flow trader | Session recap, confirm which flagged contracts became new open interest, confirm or withdraw nominations, views on the board | 8:25 |
 | 8:27 | Derivatives strategist | Desk check: fresh-OI levels and views for every board name, SPY and QQQ | 8:47 |
 | 8:50 | Desk lead | Morning meeting: read the board, fill gaps, write the Desk Report | 9:10 |
 | about 9:15 | Kerry | Reads the Desk Report | |
@@ -71,7 +72,7 @@ it runs out.
 Everything for one trading day lives in
 `/mnt/project-files/opptions/desk/<DATE>/`, where `<DATE>` is the trading day
 the Desk Report is for: `TZ=America/New_York date +%F` on the morning runs,
-and `<NEXT_TRADING_DATE>` on the 4:40 PM GEX run. Per-ticker files
+and `<NEXT_TRADING_DATE>` on the 4:20 PM Flow and 4:40 PM GEX runs. Per-ticker files
 (`gex/<SYMBOL>-<DATE>.md` and the rest) always carry the run's own date.
 
 | File | Written by |
@@ -79,7 +80,7 @@ and `<NEXT_TRADING_DATE>` on the 4:40 PM GEX run. Per-ticker files
 | `gex.md`, `scan-gex.md` | Derivatives strategist |
 | `news.md` | News analyst |
 | `earnings.md` | Earnings analyst |
-| `flow.md`, `scan-flow.md` | Flow trader |
+| `flow.md`, `scan-flow.md`, `scan-flow.json` | Flow trader |
 | `desk-report.md` | Desk lead |
 
 - Create the folder with `mkdir -p` if it is missing.
@@ -178,7 +179,7 @@ Where each seat scouts:
 |---|---|
 | News analyst | Google News RSS searches (upgrades and downgrades, guidance changes, deals, FDA decisions, pre-market movers), SEC EDGAR's latest 8-K feed (`https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&output=atom`), then `python3 -m opptions news <SYM>` on candidates |
 | Earnings analyst | The Nasdaq earnings calendar for the next 10 days (`https://www.nasdaq.com/market-activity/earnings`, or `https://api.nasdaq.com/api/calendar/earnings?date=YYYY-MM-DD`, one call per day, with the headers in `opptions.earnings.NASDAQ_HEADERS`), keeping names in the scan universe or above about $10B market cap; names whose implied move is far from their average actual move (`PYTHONPATH=. python3 /mnt/project-files/opptions/tools/earnings_moves.py NKE:ac PEP:bo` from the clode repo root; `:ac` reports after the close, `:bo` before the open); names that just reported with a large gap |
-| Flow trader | `python3 -m opptions scan flow`, output saved to `scan-flow.md` on the board, then `python3 -m opptions flow <SYM>` on the top 5 |
+| Flow trader | `python3 -m opptions scan flow --json` after the close (saved as `scan-flow.json` and `scan-flow.md` on the next trading day's board), `python3 -m opptions flow <SYM>` on the top 5, then the morning check of which flagged contracts became new open interest. Size is judged by time value: deep in-the-money LEAPS are mostly stock replacement or rolls |
 | Derivatives strategist | `python3 -m opptions scan gex` (names near the flip, deep negative gamma, pinned at a wall, big expiry roll-off), output saved to `scan-gex.md` on the board, then `python3 -m opptions gex <SYM>` on the top 5 |
 
 `scan` uses a built-in list of liquid optionable names and does not read

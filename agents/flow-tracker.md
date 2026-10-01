@@ -22,20 +22,41 @@ board, the note format, the deadlines and the holiday check.
 
 **Which run is this?** Your scheduled message only says to do your run, so go
 by the ET clock (`TZ=America/New_York date +%H:%M`): before 10:00 is the
-morning `run`; from 11:00 to 15:00 is the midday `refresh`. A refresh only
-appends; it never rewrites the morning files.
+morning `run`; from 11:00 to 15:00 is the midday `refresh`; after 16:00 is
+the post-close scan. A refresh only appends; it never rewrites the morning
+files.
 
-- **8:05 AM run**: after the watchlist recap of the previous session, run
-  `python3 -m opptions scan flow` (add
-  `--universe /mnt/project-files/opptions/universe.md` when that file exists),
-  save its output as `scan-flow.md` on the board, and look closer at the top 5
-  with `python3 -m opptions flow <SYM>`. Nominate up to 3 names whose unusual
-  activity points somewhere worth the desk's time. Then read the News,
-  Earnings and GEX board files for today, give a flow view on every name
-  already nominated, and add your Market backdrop lines for SPY and QQQ.
-  Write `/mnt/project-files/opptions/desk/<DATE>/flow.md` and finish by
-  8:25 ET: the GEX desk check starts at 8:27 and only covers your nominations
-  if your file is done.
+Why the scan runs after the close: open interest updates overnight. Until
+then, "volume above open interest" catches every contract with big new
+volume. After the update, the contracts whose volume became new positions,
+the most meaningful ones, no longer look unusual. So you scan in the evening
+and check the next morning which of those contracts were really opened.
+
+- **4:20 PM post-close scan**: run `python3 -m opptions scan flow --json`
+  (add `--universe /mnt/project-files/opptions/universe.md` when that file
+  exists) and save it as `scan-flow.json` on the next trading day's board,
+  `/mnt/project-files/opptions/desk/<NEXT_TRADING_DATE>/` (the date command is
+  in desk.md), with the Markdown version beside it as `scan-flow.md`. Look
+  closer at the top 5 with `python3 -m opptions flow <SYM>`. Judge size by
+  time value, not total premium: deep in-the-money options (especially
+  LEAPS) are mostly built-in value from stock replacement or rolls, so
+  they say little about direction. Write up to 3 provisional nominations to
+  that board's `flow.md` under `## Post-close <HH:MM> ET`, marked
+  "provisional: confirm at 8:05".
+- **8:05 AM run**: write the watchlist recap of the previous session. Then
+  check which of last night's flagged contracts became new positions: run
+  `python3 -m opptions confirm /mnt/project-files/opptions/desk/<DATE>/scan-flow.json`
+  once that command exists on the default branch. Until then, compare each
+  flagged contract's open interest in `flow <SYM> --json` with its volume last
+  night. A contract counts as opened when its OI rose by at least half of
+  last night's volume. If OI has not updated yet, say so under Gaps. Confirm
+  or withdraw each provisional nomination, keeping the cap of 3. Then read
+  the News, Earnings and GEX board files for today, give a flow view on every
+  name already nominated, and add your Market backdrop lines for SPY and QQQ.
+  Append `## Morning <HH:MM> ET` to
+  `/mnt/project-files/opptions/desk/<DATE>/flow.md`, or create the file if
+  last night's run left none. Finish by 8:25 ET: the GEX desk check starts
+  at 8:27 and only covers your nominations if your file is done.
 - **12:17 midday refresh**: append `## Refresh <HH:MM> ET` to each per-ticker
   file and `## Midday <HH:MM> ET` to today's `flow.md`, also covering the
   names in today's Desk Report. If `desk-report.md` is missing or has no
