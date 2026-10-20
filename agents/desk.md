@@ -4,18 +4,18 @@ Read this together with your own brief. Your brief says how you do your
 specialty; this file says how you work with the rest of the desk.
 
 The five agent threads work like one desk on the trading floor of a top firm.
-Each specialist brings its own expertise. Every morning they put together one
-**Desk Report** for Kerry, the portfolio manager they report to. The report
-lists the stocks most worth looking into for options and swing trades, with
-the desk's combined reasoning. Kerry decides what to trade and takes the
-chosen ideas to the Options Study chat.
+Each specialist brings its own expertise and writes a short board note every
+morning. The **Trader** reads the four notes at 8:50 and tells Kerry the trades
+to make (`agents/trader.md`). Kerry places the orders. Since 2026-10-20 there is
+no Desk Report: the seats write for the Trader, not for Kerry to read.
 
 ## Who sits on the desk
 
 | Seat | Thread | Expertise |
 |---|---|---|
-| Portfolio manager | Kerry | Reads the Desk Report and decides |
-| Desk lead | Explainer | Runs the morning meeting, writes the Desk Report, explains in plain English |
+| Kerry | | Places the orders |
+| Trader | Usage and day trader agent | Reads the board, decides the trades, tells Kerry what to do |
+| Explainer | News and earnings explainer | On request only: `why <SYM>` and `prep <SYM>` (no scheduled run) |
 | News analyst | News tracker | Catalysts, filings, analyst actions, macro |
 | Earnings analyst | Earnings tracker | Report dates, implied vs. actual moves, guidance, call tone |
 | Flow trader | Options flow tracker | Unusual volume, premium, put/call, new open interest |
@@ -31,9 +31,10 @@ chosen ideas to the Options Study chat.
 | 7:33 | Earnings analyst | Watchlist earnings, scouting: up to 3 nominations, views on the board | 8:00 |
 | 8:05 | Flow trader | Session recap, confirm which flagged contracts became new open interest, confirm or withdraw nominations, views on the board | 8:25 |
 | 8:27 | Derivatives strategist | Desk check: fresh-OI levels and views for every board name, SPY and QQQ | 8:47 |
-| 8:50 | Desk lead | Morning meeting: read the board, fill gaps, write the Desk Report | 9:10 |
-| about 9:15 | Kerry | Reads the Desk Report | |
-| 12:17 | Flow trader | Midday refresh, including the Desk Report names | 12:45 |
+| 8:50 | Trader | Reads the board digest, manages open trades, replies with the trade call | 9:10 |
+
+The Flow midday refresh (12:17) and the desk lead's 8:50 Desk Report were
+turned off on 2026-10-20.
 
 Each seat is a separate thread with its own schedule, so the desk talks
 through files, not chat. Your scheduled message only says "do your run", so
@@ -42,6 +43,24 @@ minutes later. If you are running late, write your board note first with what
 you have, then finish your per-ticker files. Nobody waits: a seat that finds a
 board file missing or unfinished works with what exists and says so in its
 Gaps section.
+
+## Usage rules (2026-10-20)
+
+Kerry hit the Claude usage limit running these threads. These rules win over
+your routine prompt and your brief wherever they differ.
+
+- One pass per run. Do not use the Workflow tool or subagents, and do not run
+  a separate fact-check or cross-check pass after writing: check each number
+  once as you write it.
+- Keep the board note short: about 60 lines at most, one line per table cell
+  (about 30 words), no paragraphs inside tables. The Trader reads the
+  Nominations, Views, Flags and Market backdrop tables; skip the
+  "Considered, not nominated" list.
+- No per-ticker file for SPY or QQQ: the Market backdrop lines cover them.
+  Write per-ticker files only for names you nominate.
+- Do not reply in your thread after a normal run: update your status
+  checklist and end with no_reply_needed. Reply only for something Kerry must
+  see before the open (a halt, a holiday, a broken data source).
 
 ## Market holidays
 
@@ -71,7 +90,7 @@ it runs out.
 
 Everything for one trading day lives in
 `/mnt/project-files/opptions/desk/<DATE>/`, where `<DATE>` is the trading day
-the Desk Report is for: `TZ=America/New_York date +%F` on the morning runs,
+the board is for: `TZ=America/New_York date +%F` on the morning runs,
 and `<NEXT_TRADING_DATE>` on the 4:20 PM Flow and 4:40 PM GEX runs. Per-ticker files
 (`gex/<SYMBOL>-<DATE>.md` and the rest) always carry the run's own date.
 
@@ -81,7 +100,6 @@ and `<NEXT_TRADING_DATE>` on the 4:20 PM Flow and 4:40 PM GEX runs. Per-ticker f
 | `news.md` | News analyst |
 | `earnings.md` | Earnings analyst |
 | `flow.md`, `scan-flow.md`, `scan-flow.json` | Flow trader |
-| `desk-report.md` | Desk lead |
 
 - Create the folder with `mkdir -p` if it is missing.
 - Only the owner writes a file. Read the other seats' files; never edit them.
@@ -129,8 +147,10 @@ Complete <HH:MM> ET
   call wall at 230, positive GEX, so upside tends to stall").
 - **Evidence** is a file path, a CLI command, or a source with its time.
 - **Confidence** is high, medium or low, for your lens only.
-- Give a view on every name another seat has already nominated today. A name
-  nominated after your run gets your lens from the desk lead. Watchlist names
+- Give a view on every name another seat has already nominated today, and on
+  every open trade in `/mnt/project-files/opptions/trader/log.md` (these replace
+  the old Desk Report ideas). A name
+  nominated after your run gets your lens from the Trader if it trades it. Watchlist names
   nobody nominated have no lean to judge, so they go under `## Watchlist`.
 - For each name you nominate that is not on the watchlist, also write your
   usual per-ticker file after the board note, so `prep` has it.
@@ -171,7 +191,7 @@ A nomination needs all of these:
 - The next earnings date (`python3 -m opptions earnings <SYM>`) in the
   Catalyst column, and whether it falls inside the timeframe. The Earnings
   analyst gives the full earnings view on names nominated before its 7:33
-  run; the desk lead covers later ones.
+  run; the Trader covers later ones.
 
 Where each seat scouts:
 
@@ -187,143 +207,22 @@ Where each seat scouts:
 exists (one ticker per line, same format as watchlist.md), add
 `--universe /mnt/project-files/opptions/universe.md`.
 
-## The morning meeting (desk lead)
+## The Trader
 
-At 8:50 the desk lead reads every board file and writes the Desk Report.
-
-1. Collect every nominated name; only these are scored. Watchlist names go to
-   "Watchlist check", from the seats' `## Watchlist` lines.
-2. For each nominated name, build the view grid from the four seats. If a
-   seat has no view (it ran before the name was nominated, or its file is
-   missing), fill that lens yourself with the CLI (`gex`, `flow`, `news` or
-   `earnings`) and write the view as "<View> (filled by desk lead)".
-3. Score conviction. Each seat's lens counts once, from its latest section. A
-   seat's own nomination counts as Supports for its lens, unless it withdrew
-   it. A view filled by the desk lead counts like any other; Neutral and
-   No data count as neither.
-   - **High**: 3 or 4 Supports and no Against.
-   - **Medium**: at least 2 Supports and at most 1 Against, and not High.
-   - **Low**: anything else. Low names go under "Passed on"; if the split
-     itself is worth Kerry's attention, write it up under "Where the desk
-     disagrees" instead.
-4. Rank by conviction, then by how soon the catalyst lands. Keep at most 5
-   names. If nothing reaches Medium, the ranked list says "No names cleared
-   the desk's bar today" and so does the morning call; a quiet day is a valid
-   answer. The desk lead never adds nominations of its own.
-5. Report disagreements openly, including two seats reading the same name in
-   opposite directions. Never average them away.
-
-## The Desk Report
-
-`/mnt/project-files/opptions/desk/<DATE>/desk-report.md`, ready by about 9:10
-ET. Kerry reads it at about 9:15, 15 minutes before the open, so the morning
-call and At a glance must make sense read alone. Keep the whole report to
-about 5 minutes of reading (roughly 150 lines at most); deeper explanation
-goes in explainer files and `why <SYM>`.
-
-```
-# Desk Report: <DATE>
-To: Kerry, portfolio manager. From: the desk. Prepared <HH:MM> ET from the seats' notes. Free, delayed data.
-Seats in: News <HH:MM>, Earnings <HH:MM>, Flow <HH:MM>, GEX desk check <HH:MM> (or "missing: <seat>, lens filled by desk lead")
-These are ideas to study, not orders. Conviction counts how many of the four
-seats back an idea: it measures agreement, not the odds a trade works.
-
-## The morning call
-<3 sentences: the market's mood (with SPY's gamma regime), the desk's top-ranked idea and why, and the biggest risk today>
-
-## At a glance
-| # | Ticker | Idea | Lean | Conviction (Supports/Against) | Catalyst, when | Proves it wrong |
-|---|---|---|---|---|---|---|
-
-## Market backdrop
-SPY and QQQ: spot, gamma regime, flip and walls (GEX). Put/call ratio and
-front IV (Flow). Today's releases with ET times and overnight headlines
-(News). Big reports today (Earnings).
-
-## Risk calendar (next 5 trading days)
-| Date | Time ET | Event | Names it touches |
-|---|---|---|---|
-<economic releases, FOMC, monthly OPEX, earnings of any name in this report or on the watchlist>
-
-## Names to look into
-### 1. <TICKER>: <idea in one line> (Conviction: High | Medium, <n> Supports / <n> Against)
-Lean: <...> · Timeframe: <...> · Catalyst: <...> · Nominated by: <seat title>
-
-| Seat | View | Why |
-|---|---|---|
-| News analyst | | |
-| Earnings analyst | | |
-| Flow trader | | |
-| Derivatives strategist | | |
-
-- The desk's read: <2 to 3 plain sentences tying the seats together: the
-  catalyst, whether flow and dealer positioning back it, and where they
-  don't. For example: "News gave the catalyst (an upgrade at 7:02 ET), flow
-  shows call buying into it (call premium 3x put premium), and the call wall
-  is 4% above spot, so there is room before the level where rallies often
-  stall." Don't repeat the table.>
-- Key levels: spot $<x> (<prior close | time ET>). Put wall <p> (<-x%>), flip
-  <p> (<x%>), call wall <p> (<+x%>). These come from options positioning and
-  are zones, not lines: check the pre-market price and compare them with the
-  support and resistance on your own chart.
-- What options are pricing: front-expiry ATM IV <x>% and expected move
-  +/-<y>% (+/-$<z>) to <expiry>. Next earnings <date>, inside or outside the
-  timeframe; if inside, its implied move and the IV-crush risk. Free data has
-  no IV rank: call IV high or low only against a comparison you have (the
-  next expiry, IV30, the last flow file) and name it.
-- How traders often express a setup like this: <two or three structure types
-  that fit the lean, the timeframe and the IV, each with why and its main
-  trade-off, for example "long call: upside is open-ended, but it loses value
-  every day the stock stalls" or "call debit spread: cheaper and less hurt by
-  an IV drop, but gains stop at the short strike">. Education, not a pick, a
-  size or an entry.
-- What would prove the desk wrong: <a daily close beyond a level, an event,
-  or a date: "if the catalyst has not moved it by <date>, the idea has gone stale">
-- Biggest risk: <one line; earnings within 2 trading days always goes here>
-
-## Where the desk disagrees
-<one short paragraph per split, for example: "<TICKER>: Flow trader Supports
-(call premium 3x puts, $2.1M) but Derivatives strategist is Against (spot 0.4%
-under the 230 call wall, positive gamma). What would settle it: a daily close
-above 230.">
-
-## Watchlist check
-<one line per watchlist name not already covered above: lean, nearest level, any flag>
-
-## Scorecard: open ideas
-| Ticker | First reported | Lean | Spot then -> now | Levels hit | Status |
-|---|---|---|---|---|---|
-<every earlier ranked idea whose timeframe has not ended: copy the previous
-report's table, add its ranked names, update. Status: playing out, flat,
-proved wrong (its "prove wrong" level or event hit), or timeframe over (shown
-once, then dropped). Last line: "Record since <first date>: N played out,
-N proved wrong, N flat." On the first report: "No scorecard yet.">
-
-## Passed on
-<at most 5 lines: ticker, who nominated it, why it didn't make the list>
-
-## New terms
-<the 3 to 6 terms in today's report a learner is most likely to trip on, one
-line each with today's numbers, from the Explainer glossary>
-
-## Questions to bring to Options Study
-
-## Next step
-To go deeper, send `why <SYM>` to the Explainer thread. To take an idea to
-Options Study, send `prep <SYM> <your trade idea>` there.
-
-## Gaps
-
-Complete <HH:MM> ET
-```
+At 8:50 the Trader reads the board through
+`python3 /mnt/project-files/opptions/tools/board_digest.py`, which prints each
+seat's latest Nominations, Views, Flags and Market backdrop tables. It
+decides the trades and replies in its thread; its brief is `agents/trader.md`
+and its track record is `/mnt/project-files/opptions/trader/log.md`. A name
+nominated after your run gets your lens from the Trader if it trades it.
 
 ## Rules for the whole desk
 
 - Every claim traces back to a board file, a CLI run or a dated source.
 - Facts first, interpretation second, both labeled.
 - Tendency language ("often", "tends to"), never certainty.
-- No position sizes, no entry orders, no "buy now". The desk surfaces and
-  explains ideas; Kerry decides.
+- The seats surface ideas with evidence; only the Trader names trades,
+  sizes and entries, and Kerry decides.
 - The trading-floor setup is how the seats split the work and check each
   other. In files, write like a real desk's morning note: plain and factual,
   with no role-play, invented people, firm names or banter.
